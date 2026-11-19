@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Play,
   Lightbulb,
@@ -16,8 +16,17 @@ import {
 import { QRCodeSVG } from 'qrcode.react';
 import CodeEditor from '@/components/CodeEditor';
 import LivePreview from '@/components/LivePreview';
+import { GAME_CONFIG } from '@/lib/game/config';
 import { LEVELS } from '@/lib/levels';
+import { MAX_TOTAL_SCORE } from '@/lib/scoring';
 
+// TODO : remplacer par le vrai lien d'invitation du groupe WhatsApp
+const WHATSAPP_GROUP_URL = 'https://chat.whatsapp.com/lien_whatsapp_club';
+
+// Le contrat de l'API (README) ne prévoit que : levelId, code, remainingSeconds,
+// hintUsed, skipped. Passe à true seulement si le pôle 2 confirme que
+// pseudo / filiere / totalTimeSeconds sont acceptés (sinon risque de 400).
+const SEND_PLAYER_INFO = false;
 
 interface CheckResult {
   id: string;
@@ -25,6 +34,28 @@ interface CheckResult {
   passed: boolean;
   detail?: string;
 }
+
+interface Breakdown {
+  basePoints: number;
+  speedBonus: number;
+  hintPenalty: number;
+  totalPoints: number;
+}
+
+// Réponse 200 de POST /api/validate (voir README de l'API)
+interface ValidateResponse {
+  levelId: number;
+  valid: boolean;
+  skipped: boolean;
+  pointsAwarded: number;
+  breakdown?: Breakdown;
+  feedback: string;
+  checks: CheckResult[];
+  nextLevel: number | null;
+}
+
+// Corps possible d'une erreur (400 / 500)
+type ValidateErrorBody = { error?: string; message?: string };
 
 export default function PlayPage() {
   // État global de la session
@@ -47,11 +78,20 @@ export default function PlayPage() {
   const [isValidating, setIsValidating] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [checks, setChecks] = useState<CheckResult[]>([]);
+  const [breakdown, setBreakdown] = useState<Breakdown | null>(null);
   const [isSuccess, setIsSuccess] = useState<boolean | null>(null);
+  // Points réellement crédités sur le dernier niveau validé (pour affichage clair)
+  const [lastAwarded, setLastAwarded] = useState<number | null>(null);
 
-  // Calcul du temps écoulé sur le niveau actuel (Skip autorisé après 30s)
+  // Verrou synchrone : empêche un double-clic de créditer deux fois le même niveau
+  const submitLockRef = useRef(false);
+  // Timer du passage automatique au niveau suivant (nettoyé au démontage / reset)
+  const nextLevelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Calcul du temps écoulé sur le niveau actuel (Skip autorisé après le délai configuré)
   const elapsedSeconds = currentLevel.durationSeconds - remainingSeconds;
-  const canSkip = elapsedSeconds >= 30;
+  const canSkip = elapsedSeconds >= GAME_CONFIG.skipAvailableAfterSeconds;
+  const isTimeUp = remainingSeconds <= 0;
 
   // Chronomètre dégressif
   useEffect(() => {
@@ -65,6 +105,13 @@ export default function PlayPage() {
     return () => clearInterval(timer);
   }, [step, isValidating, isSuccess, levelIndex]);
 
+  // Nettoyage du timeout au démontage
+  useEffect(() => {
+    return () => {
+      if (nextLevelTimeoutRef.current) clearTimeout(nextLevelTimeoutRef.current);
+    };
+  }, []);
+
   // Initialiser un niveau donné
   const loadLevel = (index: number) => {
     const lvl = LEVELS[index];
@@ -74,89 +121,193 @@ export default function PlayPage() {
     setHintUsed(false);
     setFeedback(null);
     setChecks([]);
+    setBreakdown(null);
     setIsSuccess(null);
+    setLastAwarded(null);
   };
 
   // Démarrer la partie
   const handleStart = (e: React.FormEvent) => {
     e.preventDefault();
     if (pseudo.trim().length < 2) return;
+    submitLockRef.current = false;
     setScore(0);
     setTotalTimeSpent(0);
+    setLastAwarded(null);
     loadLevel(0);
     setStep('playing');
   };
 
-  // Débloquer l'indice (-30 pts)
+  // Débloquer l'indice
   const handleRevealHint = () => {
-    if (!hintUsed) {
+    if (!hintUsed && !isTimeUp) {
       setHintUsed(true);
     }
   };
 
+  /**
+   * Calcul local de référence (même formule que le backend).
+   * Sert uniquement de contrôle / debug pour détecter si le backend
+   * renvoie des points différents de ce qui est attendu.
+   */
+  const computeExpectedPoints = (
+    basePoints: number,
+    remaining: number,
+    usedHint: boolean,
+    skipped: boolean
+  ): number => {
+    if (skipped) return 0;
+    const speedBonus = Math.floor(remaining) * (GAME_CONFIG.speedBonusPerSecond ?? 2);
+    const penalty = usedHint ? (GAME_CONFIG.hintPenalty ?? 30) : 0;
+    return Math.max(0, basePoints + speedBonus - penalty);
+  };
+
   // Appel à l'API du Pôle 2 : POST /api/validate
   const submitAttempt = async (skipped = false) => {
+    // Verrou synchrone (le state isValidating n'est mis à jour qu'au prochain rendu)
+    if (submitLockRef.current || (!skipped && isTimeUp)) return;
+    submitLockRef.current = true;
+
     setIsValidating(true);
+    // On efface TOUT le retour précédent pour ne pas mélanger anciens et nouveaux résultats
     setFeedback(null);
+    setChecks([]);
+    setBreakdown(null);
+    setLastAwarded(null);
+
+    // Capture des valeurs AU MOMENT du clic (évite les closures périmées)
+    const levelIdAtClick = currentLevel.id;
+    const basePointsAtClick = currentLevel.basePoints;
+    const codeAtClick = code;
+    const remainingAtClick = remainingSeconds;
+    const hintUsedAtClick = hintUsed;
+    const levelIndexAtClick = levelIndex;
+
+    const releaseLock = () => {
+      submitLockRef.current = false;
+      setIsValidating(false);
+    };
 
     try {
+      const payload: Record<string, unknown> = {
+        levelId: levelIdAtClick,
+        code: codeAtClick,
+        remainingSeconds: remainingAtClick,
+        hintUsed: hintUsedAtClick,
+        skipped,
+      };
+      if (SEND_PLAYER_INFO) {
+        payload.pseudo = pseudo;
+        payload.filiere = filiere;
+        payload.totalTimeSeconds = totalTimeSpent;
+      }
+
+      console.log('[DevArena] Envoi validation →', {
+        levelId: levelIdAtClick,
+        remainingSeconds: remainingAtClick,
+        hintUsed: hintUsedAtClick,
+        skipped,
+        codeLength: codeAtClick.length,
+      });
+
       const response = await fetch('/api/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          levelId: currentLevel.id,
-          code,
-          remainingSeconds,
-          hintUsed,
-          skipped,
-          pseudo,
-          filiere,
-          totalTimeSeconds: totalTimeSpent,
-        }),
+        body: JSON.stringify(payload),
       });
 
-      const data = await response.json();
+      const data = (await response.json().catch(() => null)) as
+        | (Partial<ValidateResponse> & ValidateErrorBody)
+        | null;
 
-      if (!response.ok) {
+      console.log('[DevArena] Réponse /api/validate →', response.status, data);
+
+      if (!response.ok || !data) {
         setIsSuccess(false);
-        setFeedback(data.error || 'Erreur lors de la validation.');
-        setIsValidating(false);
+        setFeedback(data?.error || data?.message || 'Erreur lors de la validation.');
+        releaseLock();
         return;
       }
 
-      setChecks(data.checks || []);
-      setFeedback(data.feedback);
+      setChecks(data.checks ?? []);
+      setFeedback(data.feedback ?? null);
+      setBreakdown(data.breakdown ?? null);
 
       if (data.valid || data.skipped) {
         setIsSuccess(true);
-        const awarded = data.pointsAwarded ?? 0;
-        setScore((prev) => prev + awarded);
 
-        // Passage automatique au niveau suivant après 1.8 seconde
-        setTimeout(() => {
-          if (levelIndex + 1 < LEVELS.length) {
-            loadLevel(levelIndex + 1);
+        let awarded = 0;
+
+        if (data.skipped) {
+          awarded = 0;
+        } else if (typeof data.pointsAwarded === 'number' && Number.isFinite(data.pointsAwarded)) {
+          awarded = data.pointsAwarded;
+        } else if (data.breakdown && typeof data.breakdown.totalPoints === 'number') {
+          awarded = data.breakdown.totalPoints;
+        } else {
+          awarded = computeExpectedPoints(
+            basePointsAtClick,
+            remainingAtClick,
+            hintUsedAtClick,
+            false
+          );
+          console.warn(
+            '[DevArena] Backend n’a pas renvoyé pointsAwarded/breakdown.totalPoints → fallback local =',
+            awarded
+          );
+        }
+
+        const expected = computeExpectedPoints(
+          basePointsAtClick,
+          remainingAtClick,
+          hintUsedAtClick,
+          !!data.skipped
+        );
+        if (awarded !== expected && !data.skipped) {
+          console.warn(
+            `[DevArena] ⚠️ Différence de score ! Backend=${awarded} | Attendu (formule)=${expected} | remaining=${remainingAtClick} | hintUsed=${hintUsedAtClick}`
+          );
+        }
+
+        awarded = Math.max(0, Math.floor(Number(awarded) || 0));
+        setLastAwarded(awarded);
+
+        setScore((prev) => {
+          const next = Math.min(MAX_TOTAL_SCORE, Math.max(0, prev + awarded));
+          console.log('[DevArena] Score mis à jour :', prev, '+', awarded, '→', next);
+          return next;
+        });
+
+        nextLevelTimeoutRef.current = setTimeout(() => {
+          if (levelIndexAtClick + 1 < LEVELS.length) {
+            loadLevel(levelIndexAtClick + 1);
           } else {
             setStep('finished');
           }
-          setIsValidating(false);
+          releaseLock();
         }, 1800);
       } else {
         setIsSuccess(false);
-        setIsValidating(false);
+        setLastAwarded(0);
+        releaseLock();
       }
-    } catch {
+    } catch (err) {
+      console.error('[DevArena] Erreur réseau /api/validate', err);
       setIsSuccess(false);
       setFeedback('Impossible de joindre le serveur de validation.');
-      setIsValidating(false);
+      releaseLock();
     }
   };
 
   // Réinitialiser pour le joueur suivant sur le stand
   const handleResetGame = () => {
+    if (nextLevelTimeoutRef.current) clearTimeout(nextLevelTimeoutRef.current);
+    submitLockRef.current = false;
+    setIsValidating(false);
     setPseudo('');
     setScore(0);
     setTotalTimeSpent(0);
+    setLastAwarded(null);
     setStep('intro');
   };
 
@@ -166,21 +317,20 @@ export default function PlayPage() {
   if (step === 'intro') {
     return (
       <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col justify-between">
-        {/* Bandeau supérieur institutionnel */}
         <header className="bg-white border-b-4 border-[#9E1B24] px-6 py-4 flex items-center justify-between shadow-sm">
           <div className="flex items-center gap-3">
-           <div className="flex items-center gap-3.5">
-            <img
+            <div className="flex items-center gap-3.5">
+              <img
                 src="/logo-red.png"
                 alt="Logo ESGIS"
                 className="h-10 w-auto object-contain shrink-0"
-            />
-            <div className="h-7 w-px bg-slate-200 hidden sm:block" aria-hidden="true" />
-            <div className="flex items-center gap-2">
+              />
+              <div className="h-7 w-px bg-slate-200 hidden sm:block" aria-hidden="true" />
+              <div className="flex items-center gap-2">
                 <span className="text-xs font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-md bg-[#FCF8E8] text-[#947618] border border-[#D4AF37]/60">
-                Club Dev
+                  Club Dev
                 </span>
-            </div>
+              </div>
             </div>
           </div>
           <span className="text-xs font-medium text-slate-500 hidden sm:inline">
@@ -188,17 +338,15 @@ export default function PlayPage() {
           </span>
         </header>
 
-        {/* Carte centrale d'inscription */}
         <main className="flex-1 flex items-center justify-center p-4">
           <form
             onSubmit={handleStart}
             className="w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-lg overflow-hidden"
           >
-            {/* En-tête de carte */}
             <div className="bg-[#9E1B24] p-6 text-white text-center relative">
               <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/15 text-[#FCF8E8] text-xs font-semibold mb-3">
                 <GraduationCap className="w-4 h-4 text-[#D4AF37]" />
-                Défi Chrono • 5 Niveaux
+                Défi Chrono • {LEVELS.length} Niveaux
               </div>
               <h1 className="text-3xl font-extrabold tracking-tight">DevArena</h1>
               <p className="text-red-100 text-sm mt-1">
@@ -206,7 +354,6 @@ export default function PlayPage() {
               </p>
             </div>
 
-            {/* Champs du formulaire */}
             <div className="p-6 space-y-5">
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-1.5">
@@ -240,14 +387,16 @@ export default function PlayPage() {
                 </select>
               </div>
 
-              {/* Rappel barème */}
               <div className="bg-[#FCF8E8] border border-[#D4AF37]/40 rounded-xl p-3.5 text-xs text-slate-700 space-y-1">
                 <p className="font-bold text-[#9E1B24]">Règles du jeu :</p>
-                <p>• Bonus rapidité : <strong>+2 pts</strong> par seconde restante.</p>
-                <p>• Indice disponible en cas de blocage (<strong>-30 pts</strong>).</p>
+                <p>
+                  • Bonus rapidité : <strong>+{GAME_CONFIG.speedBonusPerSecond} pts</strong> par seconde restante.
+                </p>
+                <p>
+                  • Indice disponible en cas de blocage (<strong>-{GAME_CONFIG.hintPenalty} pts</strong>).
+                </p>
               </div>
 
-              {/* Bouton CTA Or métallisé */}
               <button
                 type="submit"
                 className="w-full py-3.5 px-6 rounded-xl font-extrabold text-slate-950 bg-gradient-to-r from-[#D4AF37] via-[#E5C158] to-[#D4AF37] hover:brightness-105 shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
@@ -283,11 +432,13 @@ export default function PlayPage() {
           </div>
 
           <div className="p-6 space-y-6">
-            {/* Carte Score */}
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex items-center justify-around">
               <div>
                 <span className="text-xs uppercase font-bold text-slate-400">Score Final</span>
                 <p className="text-3xl font-black text-[#9E1B24]">{score} pts</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Max théorique : {MAX_TOTAL_SCORE} pts
+                </p>
               </div>
               <div className="h-10 w-px bg-slate-200"></div>
               <div>
@@ -296,14 +447,13 @@ export default function PlayPage() {
               </div>
             </div>
 
-            {/* QR Code WhatsApp */}
             <div className="bg-[#FCF8E8] border-2 border-[#D4AF37] rounded-2xl p-5 space-y-3">
               <p className="text-sm font-bold text-slate-800">
                 Rejoins le groupe WhatsApp du <span className="text-[#9E1B24]">Club Dev ESGIS</span>
               </p>
               <div className="bg-white p-3 rounded-xl inline-block shadow-sm">
                 <QRCodeSVG
-                  value="lien_whatsapp_club"
+                  value={WHATSAPP_GROUP_URL}
                   size={150}
                   fgColor="#9E1B24"
                 />
@@ -330,7 +480,6 @@ export default function PlayPage() {
   // =========================================================================
   return (
     <div className="h-screen flex flex-col bg-slate-50 text-slate-900 overflow-hidden">
-      {/* Barre supérieure (HUD) */}
       <header className="h-16 bg-white border-b-2 border-[#9E1B24] px-4 lg:px-6 flex items-center justify-between shrink-0 shadow-sm">
         <div className="flex items-center gap-3">
           <span className="font-black text-lg text-[#9E1B24] tracking-tight">ESGIS • DevArena</span>
@@ -339,7 +488,6 @@ export default function PlayPage() {
           </span>
         </div>
 
-        {/* Barre de progression des niveaux */}
         <div className="hidden md:flex items-center gap-2">
           {LEVELS.map((lvl, idx) => (
             <div
@@ -355,7 +503,6 @@ export default function PlayPage() {
           ))}
         </div>
 
-        {/* Chrono & Score */}
         <div className="flex items-center gap-3 sm:gap-4">
           <div
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-mono font-bold text-sm border ${
@@ -368,19 +515,24 @@ export default function PlayPage() {
             {remainingSeconds}s
           </div>
 
-          <div className="px-3.5 py-1.5 rounded-lg bg-[#FCF8E8] border border-[#D4AF37] font-extrabold text-sm text-slate-900 flex items-center gap-1.5">
+          <div
+            title={`Score actuel (max théorique : ${MAX_TOTAL_SCORE} pts)`}
+            className="px-3.5 py-1.5 rounded-lg bg-[#FCF8E8] border border-[#D4AF37] font-extrabold text-sm text-slate-900 flex items-center gap-1.5"
+          >
             <Trophy className="w-4 h-4 text-[#B59224]" />
-            {score} pts
+            <span>{score} pts</span>
+            {hintUsed && (
+              <span className="text-[11px] font-bold text-[#9E1B24]">
+                (-{GAME_CONFIG.hintPenalty} sur ce niveau)
+              </span>
+            )}
           </div>
         </div>
       </header>
 
-      {/* Espace principal scindé en 3 colonnes */}
       <main className="flex-1 grid grid-cols-1 lg:grid-cols-12 overflow-hidden">
-        {/* COLONNE 1 : Consigne, Indice, Checks & Boutons d'action (4 cols) */}
         <section className="lg:col-span-4 bg-white border-r border-slate-200 p-5 flex flex-col justify-between overflow-y-auto">
           <div className="space-y-4">
-            {/* Badge thème + points */}
             <div className="flex items-center justify-between">
               <span className="px-2.5 py-1 rounded-md text-xs font-bold uppercase tracking-wider bg-[#FDF2F3] text-[#9E1B24]">
                 {currentLevel.theme}
@@ -390,7 +542,6 @@ export default function PlayPage() {
               </span>
             </div>
 
-            {/* Titre & Énoncé */}
             <div>
               <h2 className="text-xl font-extrabold text-slate-900">{currentLevel.title}</h2>
               <p className="mt-2 text-sm text-slate-600 leading-relaxed bg-slate-50 p-3.5 rounded-xl border border-slate-200">
@@ -398,28 +549,29 @@ export default function PlayPage() {
               </p>
             </div>
 
-            {/* Section Indice (-30 pts) */}
             <div>
               {!hintUsed ? (
                 <button
                   type="button"
+                  disabled={isTimeUp || isValidating || isSuccess === true}
                   onClick={handleRevealHint}
-                  className="w-full py-2.5 px-3 rounded-xl bg-[#FCF8E8] hover:bg-[#D4AF37]/20 text-[#947618] border border-[#D4AF37]/50 text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer"
+                  className="w-full py-2.5 px-3 rounded-xl bg-[#FCF8E8] hover:bg-[#D4AF37]/20 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[#FCF8E8] text-[#947618] border border-[#D4AF37]/50 text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer"
                 >
                   <Lightbulb className="w-4 h-4 text-[#B59224]" />
-                  Afficher un indice (-30 pts)
+                  {isTimeUp
+                    ? 'Temps écoulé'
+                    : `Afficher un indice (-${GAME_CONFIG.hintPenalty} pts)`}
                 </button>
               ) : (
                 <div className="p-3.5 rounded-xl bg-[#FCF8E8] border border-[#D4AF37] text-xs text-slate-800 space-y-1">
                   <p className="font-bold text-[#947618] flex items-center gap-1.5">
-                    <Lightbulb className="w-4 h-4" /> Indice débloqué (-30 pts) :
+                    <Lightbulb className="w-4 h-4" /> Indice débloqué (-{GAME_CONFIG.hintPenalty} pts) :
                   </p>
                   <p className="leading-relaxed">{currentLevel.hint}</p>
                 </div>
               )}
             </div>
 
-            {/* Résultat de la validation (Feedback & Checks détaillés) */}
             {feedback && (
               <div
                 className={`p-3.5 rounded-xl border text-xs space-y-2 ${
@@ -437,12 +589,33 @@ export default function PlayPage() {
                   {feedback}
                 </p>
 
+                {isSuccess && (
+                  <div className="font-semibold space-y-0.5">
+                    {lastAwarded !== null && (
+                      <p className="text-base">
+                        +{lastAwarded} pts crédités
+                      </p>
+                    )}
+                    {breakdown && (
+                      <p className="font-normal text-emerald-800">
+                        (base {breakdown.basePoints} + rapidité {breakdown.speedBonus}
+                        {breakdown.hintPenalty > 0 ? ` − indice ${breakdown.hintPenalty}` : ''})
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 {checks.length > 0 && (
                   <ul className="space-y-1 pt-1 border-t border-black/10">
                     {checks.map((chk) => (
                       <li key={chk.id} className="flex items-start gap-1.5">
                         <span>{chk.passed ? '✅' : '❌'}</span>
-                        <span>{chk.label}</span>
+                        <span>
+                          {chk.label}
+                          {!chk.passed && chk.detail ? (
+                            <span className="block text-[11px] opacity-80">{chk.detail}</span>
+                          ) : null}
+                        </span>
                       </li>
                     ))}
                   </ul>
@@ -451,39 +624,44 @@ export default function PlayPage() {
             )}
           </div>
 
-          {/* Boutons Valider & Passer */}
           <div className="pt-5 space-y-2.5 border-t border-slate-100 mt-4">
             <button
               type="button"
-              disabled={isValidating || isSuccess === true}
+              disabled={isTimeUp || isValidating || isSuccess === true}
               onClick={() => submitAttempt(false)}
-              className="w-full py-3.5 px-4 rounded-xl bg-[#9E1B24] hover:bg-[#7A1219] disabled:opacity-50 text-white font-extrabold text-sm shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
+              className="w-full py-3.5 px-4 rounded-xl bg-[#9E1B24] hover:bg-[#7A1219] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#9E1B24] text-white font-extrabold text-sm shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
             >
               <Play className="w-4 h-4 fill-current" />
-              {isValidating ? 'Vérification en cours...' : 'Valider mon code'}
+              {isTimeUp
+                ? 'Temps écoulé'
+                : isValidating
+                ? 'Vérification en cours...'
+                : 'Valider mon code'}
             </button>
 
             <button
               type="button"
               disabled={!canSkip || isValidating || isSuccess === true}
               onClick={() => submitAttempt(true)}
-              title={!canSkip ? `Disponible après 30 secondes (${30 - elapsedSeconds}s restantes)` : 'Passer ce niveau (0 pt)'}
+              title={
+                !canSkip
+                  ? `Disponible après ${GAME_CONFIG.skipAvailableAfterSeconds} secondes (${GAME_CONFIG.skipAvailableAfterSeconds - elapsedSeconds}s restantes)`
+                  : 'Passer ce niveau (0 pt)'
+              }
               className="w-full py-2 px-3 rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-100 disabled:opacity-40 text-xs font-semibold transition flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <SkipForward className="w-3.5 h-3.5" />
               {canSkip
                 ? 'Passer ce niveau (0 pt)'
-                : `Passer disponible dans ${30 - elapsedSeconds}s`}
+                : `Passer disponible dans ${GAME_CONFIG.skipAvailableAfterSeconds - elapsedSeconds}s`}
             </button>
           </div>
         </section>
 
-        {/* COLONNE 2 : Éditeur CodeMirror (4 cols) */}
         <section className="lg:col-span-4 border-r border-slate-200 overflow-hidden">
           <CodeEditor value={code} onChange={setCode} levelId={currentLevel.id} />
         </section>
 
-        {/* COLONNE 3 : Aperçu en direct (4 cols) */}
         <section className="lg:col-span-4 overflow-hidden">
           <LivePreview code={code} levelId={currentLevel.id} />
         </section>
