@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+@theme{
+  --color-esgis-red: #9E1B24;
+  --color-esgis-red-dark: #7A1219;
+  --color-esgis-red-light: #FDF2F3;
+  --color-esgis-gold: #D4AF37;
+  --color-esgis-gold-dark: #B59224;
+  --color-esgis-gold-light: #FCF8E8;
+}
+
+/* Styles personnalisés pour l'éditeur CodeMirror */
+.cm-editor {
+  height: 100% !important;
+  font-size: 14px;
+}
