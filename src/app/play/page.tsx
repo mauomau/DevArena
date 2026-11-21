@@ -21,11 +21,8 @@ import { LEVELS } from '@/lib/levels';
 import { MAX_TOTAL_SCORE } from '@/lib/scoring';
 
 // TODO : remplacer par le vrai lien d'invitation du groupe WhatsApp
-const WHATSAPP_GROUP_URL = 'https://chat.whatsapp.com/lien_whatsapp_club';
+const WHATSAPP_GROUP_URL =process.env.NEXT_PUBLIC_WHATSAPP_GROUP_URL ?? '';
 
-// Le contrat de l'API (README) ne prévoit que : levelId, code, remainingSeconds,
-// hintUsed, skipped. Passe à true seulement si le pôle 2 confirme que
-// pseudo / filiere / totalTimeSeconds sont acceptés (sinon risque de 400).
 const SEND_PLAYER_INFO = false;
 
 interface CheckResult {
@@ -93,17 +90,30 @@ export default function PlayPage() {
   const canSkip = elapsedSeconds >= GAME_CONFIG.skipAvailableAfterSeconds;
   const isTimeUp = remainingSeconds <= 0;
 
-  // Chronomètre dégressif
+  // Chronomètre dégressif du niveau : en pause pendant la validation et après un succès
   useEffect(() => {
     if (step !== 'playing' || isValidating || isSuccess === true) return;
 
     const timer = setInterval(() => {
       setRemainingSeconds((prev) => (prev > 0 ? prev - 1 : 0));
-      setTotalTimeSpent((prev) => prev + 1);
     }, 1000);
 
     return () => clearInterval(timer);
   }, [step, isValidating, isSuccess, levelIndex]);
+
+  // Temps total de la partie : continue de courir pendant les états de validation
+  // (requête en cours, délai de 1,8 s avant le niveau suivant). Il peut donc être
+  // légèrement supérieur à la somme des temps de niveau. Dépend uniquement de `step`
+  // pour que l'intervalle ne soit pas relancé à chaque validation.
+  useEffect(() => {
+    if (step !== 'playing') return;
+
+    const totalTimer = setInterval(() => {
+      setTotalTimeSpent((prev) => prev + 1);
+    }, 1000);
+
+    return () => clearInterval(totalTimer);
+  }, [step]);
 
   // Nettoyage du timeout au démontage
   useEffect(() => {
@@ -145,26 +155,8 @@ export default function PlayPage() {
     }
   };
 
-  /**
-   * Calcul local de référence (même formule que le backend).
-   * Sert uniquement de contrôle / debug pour détecter si le backend
-   * renvoie des points différents de ce qui est attendu.
-   */
-  const computeExpectedPoints = (
-    basePoints: number,
-    remaining: number,
-    usedHint: boolean,
-    skipped: boolean
-  ): number => {
-    if (skipped) return 0;
-    const speedBonus = Math.floor(remaining) * (GAME_CONFIG.speedBonusPerSecond ?? 2);
-    const penalty = usedHint ? (GAME_CONFIG.hintPenalty ?? 30) : 0;
-    return Math.max(0, basePoints + speedBonus - penalty);
-  };
-
   // Appel à l'API du Pôle 2 : POST /api/validate
   const submitAttempt = async (skipped = false) => {
-    // Verrou synchrone (le state isValidating n'est mis à jour qu'au prochain rendu)
     if (submitLockRef.current || (!skipped && isTimeUp)) return;
     submitLockRef.current = true;
 
@@ -177,7 +169,6 @@ export default function PlayPage() {
 
     // Capture des valeurs AU MOMENT du clic (évite les closures périmées)
     const levelIdAtClick = currentLevel.id;
-    const basePointsAtClick = currentLevel.basePoints;
     const codeAtClick = code;
     const remainingAtClick = remainingSeconds;
     const hintUsedAtClick = hintUsed;
@@ -234,42 +225,23 @@ export default function PlayPage() {
       setBreakdown(data.breakdown ?? null);
 
       if (data.valid || data.skipped) {
-        setIsSuccess(true);
-
+        // Le backend est la seule source de vérité pour les points :
+        // aucun recalcul ni estimation côté client.
         let awarded = 0;
-
-        if (data.skipped) {
-          awarded = 0;
-        } else if (typeof data.pointsAwarded === 'number' && Number.isFinite(data.pointsAwarded)) {
-          awarded = data.pointsAwarded;
-        } else if (data.breakdown && typeof data.breakdown.totalPoints === 'number') {
-          awarded = data.breakdown.totalPoints;
-        } else {
-          awarded = computeExpectedPoints(
-            basePointsAtClick,
-            remainingAtClick,
-            hintUsedAtClick,
-            false
-          );
-          console.warn(
-            '[DevArena] Backend n’a pas renvoyé pointsAwarded/breakdown.totalPoints → fallback local =',
-            awarded
-          );
+        if (!data.skipped) {
+          const serverPoints = data.pointsAwarded ?? data.breakdown?.totalPoints;
+          if (typeof serverPoints !== 'number' || !Number.isFinite(serverPoints)) {
+            console.error('[DevArena] Réponse invalide : pointsAwarded / breakdown.totalPoints absent', data);
+            setIsSuccess(false);
+            setBreakdown(null);
+            setFeedback('Réponse invalide du serveur (points manquants). Réessaie.');
+            releaseLock();
+            return;
+          }
+          awarded = Math.max(0, Math.floor(serverPoints));
         }
 
-        const expected = computeExpectedPoints(
-          basePointsAtClick,
-          remainingAtClick,
-          hintUsedAtClick,
-          !!data.skipped
-        );
-        if (awarded !== expected && !data.skipped) {
-          console.warn(
-            `[DevArena] ⚠️ Différence de score ! Backend=${awarded} | Attendu (formule)=${expected} | remaining=${remainingAtClick} | hintUsed=${hintUsedAtClick}`
-          );
-        }
-
-        awarded = Math.max(0, Math.floor(Number(awarded) || 0));
+        setIsSuccess(true);
         setLastAwarded(awarded);
 
         setScore((prev) => {
@@ -380,7 +352,7 @@ export default function PlayPage() {
                   onChange={(e) => setFiliere(e.target.value)}
                   className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:border-[#9E1B24]"
                 >
-                  <option value="IRT">IRT (Informatique, Réseaux & Télécoms)</option>
+                  <option value="IRT">IRT : Informatique, Réseaux & Télécoms</option>
                   <option value="Génie Logiciel">Génie Logiciel</option>
                   <option value="Gestion / Finance">Gestion / Finance / Marketing</option>
                   <option value="Autre">Autre filière / Invité</option>
@@ -609,7 +581,12 @@ export default function PlayPage() {
                   <ul className="space-y-1 pt-1 border-t border-black/10">
                     {checks.map((chk) => (
                       <li key={chk.id} className="flex items-start gap-1.5">
-                        <span>{chk.passed ? '✅' : '❌'}</span>
+                        <span>{chk.passed ? (
+                                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                                    ) : (
+                                      <XCircle className="w-4 h-4 text-red-600 shrink-0" />
+                                    )}
+                        </span>
                         <span>
                           {chk.label}
                           {!chk.passed && chk.detail ? (
