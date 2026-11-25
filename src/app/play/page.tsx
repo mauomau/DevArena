@@ -12,18 +12,15 @@ import {
   ArrowRight,
   RotateCcw,
   GraduationCap,
+  Loader2,
 } from 'lucide-react';
-import { QRCodeSVG } from 'qrcode.react';
 import CodeEditor from '@/components/CodeEditor';
+import JoinQrCode from '@/components/JoinQrCode';
 import LivePreview from '@/components/LivePreview';
 import { GAME_CONFIG } from '@/lib/game/config';
+import type { SubmitScoreResponse } from '@/lib/game/contracts';
 import { LEVELS } from '@/lib/levels';
 import { MAX_TOTAL_SCORE } from '@/lib/scoring';
-
-// TODO : remplacer par le vrai lien d'invitation du groupe WhatsApp
-const WHATSAPP_GROUP_URL =process.env.NEXT_PUBLIC_WHATSAPP_GROUP_URL ?? '';
-
-const SEND_PLAYER_INFO = false;
 
 interface CheckResult {
   id: string;
@@ -54,6 +51,8 @@ interface ValidateResponse {
 // Corps possible d'une erreur (400 / 500)
 type ValidateErrorBody = { error?: string; message?: string };
 
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+
 export default function PlayPage() {
   // État global de la session
   const [step, setStep] = useState<'intro' | 'playing' | 'finished'>('intro');
@@ -80,15 +79,29 @@ export default function PlayPage() {
   // Points réellement crédités sur le dernier niveau validé (pour affichage clair)
   const [lastAwarded, setLastAwarded] = useState<number | null>(null);
 
+  // Fin de partie : niveau atteint et enregistrement au classement
+  const [highestLevel, setHighestLevel] = useState(0);
+  const [levelsValidated, setLevelsValidated] = useState(0);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [finalRank, setFinalRank] = useState<number | null>(null);
+  const [finalTotalPlayers, setFinalTotalPlayers] = useState<number | null>(null);
+
   // Verrou synchrone : empêche un double-clic de créditer deux fois le même niveau
   const submitLockRef = useRef(false);
+  // Empêche d'enregistrer deux fois le score final
+  const scoreSavedRef = useRef(false);
   // Timer du passage automatique au niveau suivant (nettoyé au démontage / reset)
   const nextLevelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Dernière valeur du temps total, lisible dans les callbacks asynchrones
+  const totalTimeSpentRef = useRef(0);
 
   // Calcul du temps écoulé sur le niveau actuel (Skip autorisé après le délai configuré)
   const elapsedSeconds = currentLevel.durationSeconds - remainingSeconds;
   const canSkip = elapsedSeconds >= GAME_CONFIG.skipAvailableAfterSeconds;
   const isTimeUp = remainingSeconds <= 0;
+  const rankLabel =
+    finalRank === null ? null : finalRank === 1 ? '1er' : `${finalRank}e`;
 
   // Chronomètre dégressif du niveau : en pause pendant la validation et après un succès
   useEffect(() => {
@@ -114,6 +127,11 @@ export default function PlayPage() {
 
     return () => clearInterval(totalTimer);
   }, [step]);
+
+  // Miroir du temps total pour les callbacks qui capturent une ancienne closure.
+  useEffect(() => {
+    totalTimeSpentRef.current = totalTimeSpent;
+  }, [totalTimeSpent]);
 
   // Nettoyage du timeout au démontage
   useEffect(() => {
@@ -141,9 +159,17 @@ export default function PlayPage() {
     e.preventDefault();
     if (pseudo.trim().length < 2) return;
     submitLockRef.current = false;
+    scoreSavedRef.current = false;
+    totalTimeSpentRef.current = 0;
     setScore(0);
     setTotalTimeSpent(0);
     setLastAwarded(null);
+    setHighestLevel(0);
+    setLevelsValidated(0);
+    setSaveStatus('idle');
+    setSaveError(null);
+    setFinalRank(null);
+    setFinalTotalPlayers(null);
     loadLevel(0);
     setStep('playing');
   };
@@ -152,6 +178,56 @@ export default function PlayPage() {
   const handleRevealHint = () => {
     if (!hintUsed && !isTimeUp) {
       setHintUsed(true);
+    }
+  };
+
+  /**
+   * Enregistre la performance finale dans `scores` (Supabase) via
+   * `POST /api/scores`. Le score affiché provient déjà du serveur de
+   * validation : le client ne fait que transmettre le total.
+   */
+  const persistScore = async (finalScore: number, lastLevel: number) => {
+    if (scoreSavedRef.current) return;
+    scoreSavedRef.current = true;
+    setSaveStatus('saving');
+    setSaveError(null);
+
+    try {
+      const response = await fetch('/api/scores', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pseudo: pseudo.trim(),
+          filiere,
+          score: finalScore,
+          currentLevel: Math.max(1, lastLevel),
+          totalTimeSeconds: totalTimeSpentRef.current,
+        }),
+      });
+
+      const data = (await response.json().catch(() => null)) as
+        | (Partial<SubmitScoreResponse> & ValidateErrorBody)
+        | null;
+
+      if (!response.ok || !data) {
+        throw new Error(
+          data?.error || data?.message || 'Enregistrement du score impossible.',
+        );
+      }
+
+      setFinalRank(typeof data.rank === 'number' ? data.rank : null);
+      setFinalTotalPlayers(
+        typeof data.totalPlayers === 'number' ? data.totalPlayers : null,
+      );
+      setSaveStatus('saved');
+    } catch (err) {
+      console.error('[DevArena] Enregistrement du score impossible', err);
+      // Autorise le bouton « Réessayer ».
+      scoreSavedRef.current = false;
+      setSaveError(
+        err instanceof Error ? err.message : 'Enregistrement du score impossible.',
+      );
+      setSaveStatus('error');
     }
   };
 
@@ -180,38 +256,21 @@ export default function PlayPage() {
     };
 
     try {
-      const payload: Record<string, unknown> = {
-        levelId: levelIdAtClick,
-        code: codeAtClick,
-        remainingSeconds: remainingAtClick,
-        hintUsed: hintUsedAtClick,
-        skipped,
-      };
-      if (SEND_PLAYER_INFO) {
-        payload.pseudo = pseudo;
-        payload.filiere = filiere;
-        payload.totalTimeSeconds = totalTimeSpent;
-      }
-
-      console.log('[DevArena] Envoi validation →', {
-        levelId: levelIdAtClick,
-        remainingSeconds: remainingAtClick,
-        hintUsed: hintUsedAtClick,
-        skipped,
-        codeLength: codeAtClick.length,
-      });
-
       const response = await fetch('/api/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          levelId: levelIdAtClick,
+          code: codeAtClick,
+          remainingSeconds: remainingAtClick,
+          hintUsed: hintUsedAtClick,
+          skipped,
+        }),
       });
 
       const data = (await response.json().catch(() => null)) as
         | (Partial<ValidateResponse> & ValidateErrorBody)
         | null;
-
-      console.log('[DevArena] Réponse /api/validate →', response.status, data);
 
       if (!response.ok || !data) {
         setIsSuccess(false);
@@ -244,17 +303,22 @@ export default function PlayPage() {
         setIsSuccess(true);
         setLastAwarded(awarded);
 
-        setScore((prev) => {
-          const next = Math.min(MAX_TOTAL_SCORE, Math.max(0, prev + awarded));
-          console.log('[DevArena] Score mis à jour :', prev, '+', awarded, '→', next);
-          return next;
-        });
+        const nextScore = Math.min(
+          MAX_TOTAL_SCORE,
+          Math.max(0, score + awarded),
+        );
+        setScore(nextScore);
+        setHighestLevel((previous) => Math.max(previous, levelIdAtClick));
+        if (data.valid) {
+          setLevelsValidated((previous) => previous + 1);
+        }
 
         nextLevelTimeoutRef.current = setTimeout(() => {
           if (levelIndexAtClick + 1 < LEVELS.length) {
             loadLevel(levelIndexAtClick + 1);
           } else {
             setStep('finished');
+            void persistScore(nextScore, levelIdAtClick);
           }
           releaseLock();
         }, 1800);
@@ -275,11 +339,19 @@ export default function PlayPage() {
   const handleResetGame = () => {
     if (nextLevelTimeoutRef.current) clearTimeout(nextLevelTimeoutRef.current);
     submitLockRef.current = false;
+    scoreSavedRef.current = false;
+    totalTimeSpentRef.current = 0;
     setIsValidating(false);
     setPseudo('');
     setScore(0);
     setTotalTimeSpent(0);
     setLastAwarded(null);
+    setHighestLevel(0);
+    setLevelsValidated(0);
+    setSaveStatus('idle');
+    setSaveError(null);
+    setFinalRank(null);
+    setFinalTotalPlayers(null);
     setStep('intro');
   };
 
@@ -292,6 +364,7 @@ export default function PlayPage() {
         <header className="bg-white border-b-4 border-[#9E1B24] px-6 py-4 flex items-center justify-between shadow-sm">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-3.5">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src="/logo-red.png"
                 alt="Logo ESGIS"
@@ -321,7 +394,7 @@ export default function PlayPage() {
                 Défi Chrono • {LEVELS.length} Niveaux
               </div>
               <h1 className="text-3xl font-extrabold tracking-tight">DevArena</h1>
-              <p className="text-red-100 text-sm mt-1">
+              <p className="text-red-100 text-sm mt-1 text-balance">
                 Code vite, marque un maximum de points et entre dans le Top 3 !
               </p>
             </div>
@@ -397,38 +470,78 @@ export default function PlayPage() {
             <div className="w-16 h-16 rounded-full bg-white/15 mx-auto flex items-center justify-center mb-3 border-2 border-[#D4AF37]">
               <Trophy className="w-8 h-8 text-[#D4AF37]" />
             </div>
-            <h2 className="text-2xl font-extrabold">Félicitations, {pseudo} !</h2>
+            <h2 className="text-2xl font-extrabold">
+              {score > 0 ? `Bien joué, ${pseudo} !` : `Merci, ${pseudo} !`}
+            </h2>
             <p className="text-red-100 text-xs mt-1">
-              Ton score est affiché en direct sur le vidéoprojecteur.
+              Ton score part au classement projeté en direct sur le vidéoprojecteur.
             </p>
           </div>
 
-          <div className="p-6 space-y-6">
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex items-center justify-around">
+          <div className="p-6 space-y-5">
+            <div className="grid grid-cols-3 gap-2 bg-slate-50 border border-slate-200 rounded-xl p-4 text-center">
               <div>
-                <span className="text-xs uppercase font-bold text-slate-400">Score Final</span>
-                <p className="text-3xl font-black text-[#9E1B24]">{score} pts</p>
-                <p className="text-[11px] text-slate-400 mt-0.5">
-                  Max théorique : {MAX_TOTAL_SCORE} pts
-                </p>
+                <span className="text-[10px] uppercase font-bold text-slate-400">Score</span>
+                <p className="text-2xl font-black text-[#9E1B24]">{score}</p>
+                <p className="text-[10px] text-slate-400">/ {MAX_TOTAL_SCORE} pts</p>
               </div>
-              <div className="h-10 w-px bg-slate-200"></div>
+              <div className="border-x border-slate-200">
+                <span className="text-[10px] uppercase font-bold text-slate-400">Temps</span>
+                <p className="text-2xl font-black text-slate-700">{totalTimeSpent}s</p>
+                <p className="text-[10px] text-slate-400">au total</p>
+              </div>
               <div>
-                <span className="text-xs uppercase font-bold text-slate-400">Temps Total</span>
-                <p className="text-xl font-bold text-slate-700">{totalTimeSpent}s</p>
+                <span className="text-[10px] uppercase font-bold text-slate-400">Validés</span>
+                <p className="text-2xl font-black text-slate-700">
+                  {levelsValidated}/{LEVELS.length}
+                </p>
+                <p className="text-[10px] text-slate-400">niveaux</p>
               </div>
             </div>
+
+            {saveStatus === 'saving' && (
+              <div className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white p-3 text-xs font-semibold text-slate-500">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Enregistrement au classement…
+              </div>
+            )}
+
+            {saveStatus === 'saved' && (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3.5 text-xs text-emerald-900">
+                <p className="font-extrabold flex items-center justify-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  Score enregistré !
+                </p>
+                {rankLabel !== null && finalTotalPlayers !== null && (
+                  <p className="mt-1 text-center">
+                    Tu es <strong>{rankLabel}</strong> sur{' '}
+                    <strong>{finalTotalPlayers}</strong> joueur
+                    {finalTotalPlayers > 1 ? 's' : ''} au classement.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {saveStatus === 'error' && (
+              <div className="rounded-xl border border-red-200 bg-red-50 p-3.5 text-xs text-red-900 space-y-2">
+                <p className="font-extrabold">Score non enregistré</p>
+                {saveError && <p className="text-[11px]">{saveError}</p>}
+                <button
+                  type="button"
+                  onClick={() => void persistScore(score, Math.max(1, highestLevel))}
+                  className="w-full rounded-lg border border-red-300 bg-white px-3 py-2 font-bold text-red-800 transition hover:bg-red-100"
+                >
+                  Réessayer
+                </button>
+              </div>
+            )}
 
             <div className="bg-[#FCF8E8] border-2 border-[#D4AF37] rounded-2xl p-5 space-y-3">
               <p className="text-sm font-bold text-slate-800">
                 Rejoins le groupe WhatsApp du <span className="text-[#9E1B24]">Club Dev ESGIS</span>
               </p>
               <div className="bg-white p-3 rounded-xl inline-block shadow-sm">
-                <QRCodeSVG
-                  value={WHATSAPP_GROUP_URL}
-                  size={150}
-                  fgColor="#9E1B24"
-                />
+                <JoinQrCode size={150} />
               </div>
               <p className="text-xs text-slate-600">
                 Scanne ce code avec ton téléphone pour accéder aux ateliers, projets et hackathons !
