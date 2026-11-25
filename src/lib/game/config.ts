@@ -29,3 +29,17 @@ export const ESGIS_BRAND = {
   yellow: "#F2C94C",
   white: "#FFFFFF",
 } as const;
+
+/**
+ * Informations publiques du club.
+ *
+ * `whatsappUrl` est lue depuis `NEXT_PUBLIC_WHATSAPP_GROUP_URL` : elle est
+ * injectée au build, donc modifiable sans toucher au code. Si la variable
+ * n'est pas définie, les QR codes affichent un message de configuration au
+ * lieu d'un lien mort.
+ */
+export const CLUB = {
+  name: "Club Dev ESGIS Bénin",
+  shortName: "Club Dev",
+  whatsappUrl: process.env.NEXT_PUBLIC_WHATSAPP_GROUP_URL ?? "",
+} as const;

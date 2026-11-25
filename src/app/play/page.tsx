@@ -21,6 +21,13 @@ export default function PlayPage() {
         pseudo={game.player.pseudo}
         score={game.score}
         totalTimeSpent={game.totalTimeSpent}
+        levelsValidated={game.levelsValidated}
+        totalLevels={game.totalLevels}
+        saveStatus={game.saveStatus}
+        saveError={game.saveError}
+        rank={game.finalRank}
+        totalPlayers={game.finalTotalPlayers}
+        onRetrySave={game.retrySave}
         onReset={game.resetGame}
       />
     );

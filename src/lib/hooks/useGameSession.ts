@@ -8,12 +8,23 @@ import { GAME_CONFIG } from "../game/config";
 import { MAX_TOTAL_SCORE } from "../scoring";
 
 import type {
+  SubmitScoreResponse,
   ValidateRequest,
   ValidateResponse,
   ApiErrorResponse,
 } from "../game/contracts";
 
 type GameStep = "intro" | "playing" | "finished";
+
+type SaveStatus = "idle" | "saving" | "saved" | "error";
+
+interface ScorePayload {
+  pseudo: string;
+  filiere: string;
+  score: number;
+  currentLevel: number;
+  totalTimeSeconds: number;
+}
 
 interface PlayerInfo {
   pseudo: string;
@@ -32,6 +43,7 @@ interface GameSessionState {
   isSubmitting: boolean;
   error: string | null;
   totalTimeSpent: number;
+  levelsValidated: number;
 }
 
 // Source unique du délai avant « Passer » (même valeur que l'API : 30 s)
@@ -55,6 +67,7 @@ const initialState: GameSessionState = {
   isSubmitting: false,
   error: null,
   totalTimeSpent: 0,
+  levelsValidated: 0,
 };
 
 // Niveau réussi ou passé : le joueur attend le niveau suivant
@@ -63,6 +76,15 @@ const isSuccessful = (validation: ValidateResponse | null): boolean =>
 
 export function useGameSession() {
   const [state, setState] = useState<GameSessionState>(initialState);
+
+  // Enregistrement au classement (fin de partie)
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [finalRank, setFinalRank] = useState<number | null>(null);
+  const [finalTotalPlayers, setFinalTotalPlayers] = useState<number | null>(
+    null
+  );
+  const scoreSavedRef = useRef(false);
 
   // Verrou synchrone : empêche un double-clic de créditer deux fois le même niveau
   const submitLockRef = useRef(false);
@@ -112,6 +134,12 @@ export function useGameSession() {
 
       clearNextLevelTimeout();
       submitLockRef.current = false;
+      scoreSavedRef.current = false;
+
+      setSaveStatus("idle");
+      setSaveError(null);
+      setFinalRank(null);
+      setFinalTotalPlayers(null);
 
       setState({
         ...initialState,
@@ -126,6 +154,92 @@ export function useGameSession() {
     },
     [clearNextLevelTimeout]
   );
+
+  // --------------------------------------------------
+  // Enregistrement du score final dans le classement
+  // --------------------------------------------------
+
+  const submitScore = useCallback(async (payload: ScorePayload) => {
+    setSaveStatus("saving");
+    setSaveError(null);
+
+    try {
+      const response = await fetch("/api/scores", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = (await response.json().catch(() => null)) as
+        | (Partial<SubmitScoreResponse> & ApiErrorResponse)
+        | null;
+
+      if (!response.ok || !data) {
+        throw new Error(
+          data?.error || "Enregistrement du score impossible."
+        );
+      }
+
+      setFinalRank(typeof data.rank === "number" ? data.rank : null);
+      setFinalTotalPlayers(
+        typeof data.totalPlayers === "number" ? data.totalPlayers : null
+      );
+      setSaveStatus("saved");
+    } catch (error) {
+      // Autorise le bouton « Réessayer ».
+      scoreSavedRef.current = false;
+      setSaveError(
+        error instanceof Error
+          ? error.message
+          : "Enregistrement du score impossible."
+      );
+      setSaveStatus("error");
+    }
+  }, []);
+
+  // Fin de partie : une seule soumission automatique par partie.
+  useEffect(() => {
+    if (state.step !== "finished" || scoreSavedRef.current) return;
+
+    scoreSavedRef.current = true;
+
+    void submitScore({
+      pseudo: state.player.pseudo,
+      filiere: state.player.filiere,
+      score: state.score,
+      currentLevel: Math.max(1, state.levelIndex + 1),
+      totalTimeSeconds: state.totalTimeSpent,
+    });
+  }, [
+    state.step,
+    state.player.pseudo,
+    state.player.filiere,
+    state.score,
+    state.levelIndex,
+    state.totalTimeSpent,
+    submitScore,
+  ]);
+
+  const retrySave = useCallback(() => {
+    scoreSavedRef.current = true;
+
+    void submitScore({
+      pseudo: state.player.pseudo,
+      filiere: state.player.filiere,
+      score: state.score,
+      currentLevel: Math.max(1, state.levelIndex + 1),
+      totalTimeSeconds: state.totalTimeSpent,
+    });
+  }, [
+    submitScore,
+    state.player.pseudo,
+    state.player.filiere,
+    state.score,
+    state.levelIndex,
+    state.totalTimeSpent,
+  ]);
 
   // --------------------------------------------------
   // Mise à jour du code
@@ -256,6 +370,8 @@ export function useGameSession() {
           ...prev,
           validation: result,
           score: Math.min(MAX_TOTAL_SCORE, prev.score + awarded),
+          levelsValidated:
+            prev.levelsValidated + (result.valid ? 1 : 0),
           isSubmitting: false,
         }));
 
@@ -353,6 +469,12 @@ export function useGameSession() {
   const resetGame = useCallback(() => {
     clearNextLevelTimeout();
     submitLockRef.current = false;
+    scoreSavedRef.current = false;
+
+    setSaveStatus("idle");
+    setSaveError(null);
+    setFinalRank(null);
+    setFinalTotalPlayers(null);
     setState(initialState);
   }, [clearNextLevelTimeout]);
 
@@ -379,7 +501,13 @@ export function useGameSession() {
     isSubmitting: state.isSubmitting,
     error: state.error,
     totalTimeSpent: state.totalTimeSpent,
+    levelsValidated: state.levelsValidated,
     isLastLevel,
+
+    saveStatus,
+    saveError,
+    finalRank,
+    finalTotalPlayers,
 
     startGame,
     updateCode,
@@ -387,5 +515,6 @@ export function useGameSession() {
     submitAttempt,
     skipLevel,
     resetGame,
+    retrySave,
   };
 }

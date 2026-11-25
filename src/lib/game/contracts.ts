@@ -1,6 +1,7 @@
 import type { LevelId } from "../levels";
 import type { ScoreBreakdown } from "../scoring";
 import type { ValidationCheck } from "../validation/types";
+import type { ScoreEntry } from "./player";
 
 /**
  * Contrat public entre l'écran joueur et `POST /api/validate`.
@@ -38,4 +39,21 @@ export interface ValidateResponse {
 
 export interface ApiErrorResponse {
   error: string;
+}
+
+/** Réponse de `GET /api/scores` (écran projecteur). */
+export interface LeaderboardResponse {
+  entries: ScoreEntry[];
+  source: "supabase" | "memory";
+  /** `true` si le client peut s'abonner à Supabase Realtime. */
+  realtime: boolean;
+}
+
+/** Réponse de `POST /api/scores` (fin de partie). */
+export interface SubmitScoreResponse {
+  entry: ScoreEntry;
+  improved: boolean;
+  rank: number;
+  totalPlayers: number;
+  source: "supabase" | "memory";
 }
