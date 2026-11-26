@@ -1,4 +1,4 @@
-# DevArena — Club Dev ESGIS Bénin
+# DevArena - Club Dev ESGIS Bénin
 
 DevArena est une plateforme open-source de défis de programmation chronométrés
 avec classement en temps réel. Conçue pour la journée de lancement des clubs de
@@ -150,7 +150,7 @@ Si les variables Supabase ne sont pas définies, l'application reste
 entièrement fonctionnelle en local : les scores sont stockés dans un `Map`
 côté serveur et le leaderboard se rafraîchit par sondage toutes les 5 secondes.
 
-⚠️ Ce mode n'est **pas persistant** : il est remis à zéro à chaque redémarrage
+/!\ Ce mode n'est **pas persistant** : il est remis à zéro à chaque redémarrage
 du serveur et ne fonctionne pas sur Vercel (instances serverless). Il sert
 uniquement aux démos et aux tests. Pour l'événement, configure Supabase.
 
