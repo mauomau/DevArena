@@ -1,13 +1,26 @@
-# DevArena — Club Dev ESGIS Bénin
+# DevArena - Club Dev ESGIS Bénin
 
-DevArena est une plateforme open-source de défis de programmation chronométrés avec classement en temps réel. Conçue pour la journée de lancement des clubs de l'ESGIS Bénin, elle permet aux étudiants de tester leurs compétences sur stand pendant que les scores s'affichent en direct sur vidéoprojecteur.
+DevArena est une plateforme open-source de défis de programmation chronométrés
+avec classement en temps réel. Conçue pour la journée de lancement des clubs de
+l'ESGIS Bénin, elle permet aux étudiants de tester leurs compétences sur stand
+pendant que les scores s'affichent en direct sur vidéoprojecteur.
 
 ## Fonctionnalités principales
 
-- **Arène Joueur (`/play`)** : Interface scindée avec consigne et chronomètre, éditeur de code intégré (coloration syntaxique) et prévisualisation en direct (`iframe` isolée).
-- **5 Niveaux progressifs** : Un parcours rapide (6 min 30 max) allant du HTML de base jusqu'à l'algorithmique.
-- **Validation côté serveur** : Vérification des réponses via Next.js Server Actions / API Routes pour empêcher la lecture des solutions dans le code client.
-- **Projecteur Temps Réel (`/leaderboard`)** : Tableau des scores optimisé pour grand écran avec podium Top 3, classement par filière et mise à jour instantanée.
+- **Accueil (`/`)** : présentation du défi, du barème et QR code d'invitation au
+  groupe WhatsApp du Club Dev.
+- **Arène Joueur (`/play`)** : interface scindée avec consigne et chronomètre,
+  éditeur de code intégré (coloration syntaxique) et prévisualisation en direct
+  (`iframe` isolée).
+- **5 Niveaux progressifs** : un parcours rapide (6 min 45 max) allant du HTML
+  de base jusqu'à l'algorithmique.
+- **Validation côté serveur** : vérification des réponses via une API Route
+  Next.js pour empêcher la lecture des solutions dans le code client.
+- **Projecteur Temps Réel (`/leaderboard`)** : tableau des scores optimisé pour
+  grand écran, podium Top 3, design sombre et mise à jour instantanée via
+  Supabase Realtime (avec sondage de secours).
+- **Fin de partie** : score final, rang atteint, temps total et QR code vers le
+  groupe WhatsApp du Club.
 
 ## Structure des niveaux et scoring
 
@@ -21,86 +34,97 @@ DevArena est une plateforme open-source de défis de programmation chronométré
 
 ### Règles de calcul des points
 
-- **Bonus de rapidité** : +2 pts par seconde restante au chronomètre lors de la validation.
+- **Bonus de rapidité** : +2 pts par seconde restante au chronomètre lors de la
+  validation.
 - **Bouton Indice (Hint)** : -30 pts sur le niveau en cours.
-- **Bouton Passer (Skip)** : Disponible après 30s (0 pt attribué pour le niveau).
-- **Départage** : En cas d'égalité de score, le joueur ayant réalisé le temps total le plus court est classé devant.
+- **Bouton Passer (Skip)** : disponible après 30s (0 pt attribué pour le niveau).
+- **Départage** : en cas d'égalité de score, le joueur ayant réalisé le temps
+  total le plus court est classé devant.
+- **Score maximal théorique** : 1 810 pts (1 000 pts de base + 810 pts de bonus).
 
 ## Stack technique
 
-- **Framework** : Next.js (App Router) & TypeScript
-- **Styling** : Tailwind CSS
+- **Framework** : Next.js 16 (App Router) & TypeScript
+- **Styling** : Tailwind CSS 4
 - **Éditeur de code** : `@uiw/react-codemirror`
 - **Base de données & Realtime** : Supabase (PostgreSQL + Realtime)
+- **QR codes** : `qrcode.react`
 - **Hébergement** : Vercel
 
 ## Architecture du projet
 
 ```text
 devarena/
+├── supabase/
+│   └── schema.sql                # Table scores, RLS, publication Realtime
 ├── src/
 │   ├── app/
-│   │   ├── api/validate/route.ts # Validation sécurisée des niveaux et mise à jour des scores
-│   │   ├── page.tsx              # Accueil et inscription (Pseudo + Filière)
+│   │   ├── api/validate/route.ts # Validation sécurisée d'un niveau
+│   │   ├── api/scores/route.ts   # Lecture / écriture du classement
+│   │   ├── page.tsx              # Accueil et présentation du défi
 │   │   ├── play/page.tsx         # Arène de code (Éditeur + Preview + Chrono)
 │   │   └── leaderboard/page.tsx  # Écran vidéoprojecteur temps réel
 │   ├── components/
 │   │   ├── CodeEditor.tsx        # Wrapper CodeMirror
-│   │   ├── LivePreview.tsx       # Sandbox iframe
-│   │   └── ScoreBoardTable.tsx   # Tableau du classement
-│   ├── lib/
-│   │   ├── levels.ts             # Énoncés et codes de départ publics
-│   │   └── supabase.ts           # Clients Supabase (public & admin serveur)
-├── .env.example                  # Modèle des variables d'environnement
-└── .gitignore                    # Exclusion des fichiers sensibles (.env.local)
+│   │   ├── JoinQrCode.tsx        # QR code WhatsApp (client)
+│   │   ├── LeaderboardScreen.tsx # Podium + classement + Realtime
+│   │   └── LivePreview.tsx       # Sandbox iframe
+│   └── lib/
+│       ├── levels.ts             # Énoncés et codes de départ publics
+│       ├── scoring.ts            # Barème et classement
+│       ├── supabase.ts           # Client public (Realtime navigateur)
+│       ├── game/
+│       │   ├── config.ts         # Barème, durées, club, WhatsApp
+│       │   ├── contracts.ts      # Types des API
+│       │   └── player.ts         # Validation des scores et dédoublonnage
+│       ├── server/
+│       │   ├── scoreStore.ts     # Persistance Supabase + fallback mémoire
+│       │   └── supabaseAdmin.ts  # Client service role (serveur uniquement)
+│       └── validation/           # Moteur de validation des 5 niveaux
+├── tests/                        # Tests Node (barème, niveaux, API)
+└── .env.example                  # Modèle des variables d'environnement
 ```
+
+> **Moteur de validation (pôle 2)** : les règles de correction, le calcul des
+> points et les tests cachés sont documentés dans
+> [`docs/validation-engine.md`](docs/validation-engine.md). Lancer `npm test`
+> pour vérifier les 5 niveaux et le barème.
 
 ## Installation en local
 
 ### 1. Cloner le dépôt et installer les dépendances
 
 ```bash
-git clone [https://github.com/](https://github.com/)<votre-org>/devarena.git
-cd devarena
+git clone git@github.com:mauomau/DevArena.git
+cd DevArena
 npm install
 ```
 
 ### 2. Configurer les variables d'environnement
-
-Copie le fichier `.env.example` vers `.env.local` et remplis tes clés Supabase (ne jamais commiter `.env.local`) :
 
 ```bash
 cp .env.example .env.local
 ```
 
 ```env
-NEXT_PUBLIC_SUPABASE_URL=[https://votre-projet.supabase.co](https://votre-projet.supabase.co)
+NEXT_PUBLIC_SUPABASE_URL=https://votre-projet.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=votre-cle-publique-anon
-SUPABASE_SERVICE_ROLE_KEY=votre-cle-secrete-serveur
+SUPABASE_SERVICE_ROLE_KEY=votre-cle-secrete-service-role
+NEXT_PUBLIC_WHATSAPP_GROUP_URL=https://chat.whatsapp.com/votre-lien
 ```
 
-### 3. Configuration de la base de données (Supabase)
+- `NEXT_PUBLIC_*` est exposé au navigateur (URL Supabase, clé anon, lien
+  WhatsApp).
+- `SUPABASE_SERVICE_ROLE_KEY` reste **strictement côté serveur**. Elle permet à
+  l'API d'écrire dans la table tout en gardant la base en lecture seule pour les
+  clients.
 
-Puisque ce dépôt est public, l'écriture directe dans la table `scores` depuis le navigateur est bloquée. Seule l'API serveur Next.js (via `SUPABASE_SERVICE_ROLE_KEY`) peut insérer ou modifier un score.
+### 3. Configurer la base de données Supabase
 
-Exécute cette requête dans l'éditeur SQL de Supabase et active Realtime sur la table `scores` :
-
-```sql
-CREATE TABLE scores (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  pseudo TEXT NOT NULL CHECK (char_length(pseudo) BETWEEN 2 AND 20),
-  filiere TEXT NOT NULL,
-  score INTEGER DEFAULT 0 CHECK (score >= 0 AND score <= 2000),
-  current_level INTEGER DEFAULT 1,
-  total_time_seconds INTEGER DEFAULT 0,
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
-ALTER TABLE scores ENABLE ROW LEVEL SECURITY;
-
--- Lecture publique autorisée pour le leaderboard, écriture bloquée côté client
-CREATE POLICY "Public read access" ON scores FOR SELECT USING (true);
-```
+Ouvre **Supabase > SQL Editor**, colle le contenu de
+[`supabase/schema.sql`](supabase/schema.sql) puis exécute-le. Le script crée la
+table `scores`, active la RLS (lecture publique, écriture réservée au serveur)
+et ajoute la table à la publication Realtime.
 
 ### 4. Lancer le serveur de développement
 
@@ -108,14 +132,112 @@ CREATE POLICY "Public read access" ON scores FOR SELECT USING (true);
 npm run dev
 ```
 
-Ouvre `http://localhost:3000/play` pour tester l'arène et `http://localhost:3000/leaderboard` dans un second onglet pour vérifier la synchronisation en direct.
+- `http://localhost:3000` : accueil
+- `http://localhost:3000/play` : arène joueur
+- `http://localhost:3000/leaderboard` : écran projecteur
+
+### 5. Vérifier le projet
+
+```bash
+npm test        # 80+ tests (niveaux, barème, API scores)
+npm run typecheck
+npm run build
+```
+
+## Mode démo sans Supabase
+
+Si les variables Supabase ne sont pas définies, l'application reste
+entièrement fonctionnelle en local : les scores sont stockés dans un `Map`
+côté serveur et le leaderboard se rafraîchit par sondage toutes les 5 secondes.
+
+/!\ Ce mode n'est **pas persistant** : il est remis à zéro à chaque redémarrage
+du serveur et ne fonctionne pas sur Vercel (instances serverless). Il sert
+uniquement aux démos et aux tests. Pour l'événement, configure Supabase.
+
+## API
+
+### `POST /api/validate`
+
+Valide le code d'un joueur et calcule les points du niveau.
+
+```json
+{
+  "levelId": 1,
+  "code": "<h1>Hello ESGIS</h1>",
+  "remainingSeconds": 32,
+  "hintUsed": false,
+  "skipped": false
+}
+```
+
+La réponse contient `valid`, `pointsAwarded`, le détail `breakdown`, les
+`checks` et le `nextLevel`. Voir [`docs/validation-engine.md`](docs/validation-engine.md).
+
+### `GET /api/scores`
+
+Renvoie le classement trié et le mode de stockage :
+
+```json
+{
+  "entries": [
+    {
+      "id": "…",
+      "pseudo": "Achille_Dev",
+      "filiere": "IRT",
+      "score": 1280,
+      "currentLevel": 5,
+      "totalTimeSeconds": 212,
+      "updatedAt": "2026-11-24T20:12:00.000Z"
+    }
+  ],
+  "source": "supabase",
+  "realtime": true
+}
+```
+
+### `POST /api/scores`
+
+Enregistre la performance de fin de partie. Un joueur n'a qu'une ligne : seule
+sa meilleure performance est conservée (score le plus haut, puis temps le plus
+court).
+
+```json
+{
+  "pseudo": "Achille_Dev",
+  "filiere": "IRT",
+  "score": 1280,
+  "currentLevel": 5,
+  "totalTimeSeconds": 212
+}
+```
+
+Réponse : `{ entry, improved, rank, totalPlayers, source }`.
+
+## Déploiement Vercel
+
+1. Pousse la branche sur GitHub.
+2. Sur [Vercel](https://vercel.com), importe le dépôt `mauomau/DevArena`.
+3. Ajoute les quatre variables d'environnement de `.env.example` dans
+   **Project Settings > Environment Variables**.
+4. Déploie. Chaque push sur la branche de production redéploie automatiquement.
+5. Exécute `supabase/schema.sql` sur le projet Supabase de production.
+
+## Sécurité et limites connues
+
+- La table `scores` est en lecture seule pour les clients : les écritures
+  passent exclusivement par `SUPABASE_SERVICE_ROLE_KEY` côté serveur.
+- Le temps restant (`remainingSeconds`) et le score final sont encore transmis
+  par le client. Pour un événement sur stand, cela suffit ; avant une mise en
+  production publique, il faudra créer une session de partie côté serveur et
+  recalculer le chrono et le cumul des points à partir de l'heure de départ.
+- Ne jamais commiter `.env.local` ni exposer la clé service role.
 
 ## Contribuer au projet
 
-1. Forke le dépôt ou crée une branche dédiée depuis `main` :
+1. Crée une branche dédiée depuis `main` :
+   - `feat/scoreboard`
    - `feat/player-ui`
    - `feat/validation-engine`
-   - `feat/leaderboard-screen`
 2. Assure-toi qu'aucune clé API ou fichier `.env` n'est inclus dans tes commits.
 3. Ouvre une Pull Request claire décrivant les modifications apportées.
 
