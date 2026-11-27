@@ -1,14 +1,18 @@
 "use client";
 
-import { Clock, Trophy } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Clock, Trophy, Volume2, VolumeX } from "lucide-react";
 import { LEVELS } from "@/lib/levels";
 import { GAME_CONFIG } from "@/lib/game/config";
 import { MAX_TOTAL_SCORE } from "@/lib/scoring";
+import { isSoundMuted, setSoundMuted } from "@/lib/sound";
 
 interface ArenaHeaderProps {
   currentLevelId: number;
   levelIndex: number;
   remainingSeconds: number;
+  readingSeconds: number;
+  isReading: boolean;
   score: number;
   hintUsed: boolean;
 }
@@ -17,9 +21,24 @@ export default function ArenaHeader({
   currentLevelId,
   levelIndex,
   remainingSeconds,
+  readingSeconds,
+  isReading,
   score,
   hintUsed,
 }: ArenaHeaderProps) {
+  const [muted, setMuted] = useState(false);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMuted(isSoundMuted());
+  }, []);
+
+  function toggleMute() {
+    const next = !muted;
+    setMuted(next);
+    setSoundMuted(next);
+  }
+
   return (
     <header className="h-16 bg-white border-b-2 border-[#9E1B24] px-4 lg:px-6 flex items-center justify-between shrink-0 shadow-sm">
       <div className="flex items-center gap-3">
@@ -47,16 +66,32 @@ export default function ArenaHeader({
         ))}
       </div>
 
-      <div className="flex items-center gap-3 sm:gap-4">
+      <div className="flex items-center gap-2 sm:gap-3">
+        <button
+          type="button"
+          onClick={toggleMute}
+          title={muted ? "Activer les sons" : "Couper les sons"}
+          aria-label={muted ? "Activer les sons" : "Couper les sons"}
+          className="p-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+        >
+          {muted ? (
+            <VolumeX className="w-4 h-4 text-slate-400" />
+          ) : (
+            <Volume2 className="w-4 h-4 text-[#9E1B24]" />
+          )}
+        </button>
+
         <div
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-mono font-bold text-sm border ${
-            remainingSeconds <= 10
-              ? "bg-red-50 text-red-600 border-red-300 animate-pulse"
-              : "bg-slate-100 text-slate-800 border-slate-200"
+            isReading
+              ? "bg-amber-50 text-amber-800 border-amber-300"
+              : remainingSeconds <= 10
+                ? "bg-red-50 text-red-600 border-red-300 animate-pulse"
+                : "bg-slate-100 text-slate-800 border-slate-200"
           }`}
         >
           <Clock className="w-4 h-4 text-[#9E1B24]" />
-          {remainingSeconds}s
+          {isReading ? `Lecture ${readingSeconds}s` : `${remainingSeconds}s`}
         </div>
 
         <div

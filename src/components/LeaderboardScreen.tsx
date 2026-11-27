@@ -24,6 +24,8 @@ interface LeaderboardPayload {
 type Status = 'loading' | 'ready' | 'error';
 
 const REFRESH_INTERVAL_MS = 5_000;
+const PAGE_ROTATION_MS = 8_000;
+const ROWS_PER_PAGE = 8;
 
 function formatDuration(totalSeconds: number): string {
   const minutes = Math.floor(totalSeconds / 60);
@@ -101,8 +103,6 @@ function useLeaderboard() {
 
   // Chargement initial + sondage de secours (fonctionne sans Supabase).
   useEffect(() => {
-    // Synchronisation avec une source externe : le setState a lieu après le
-    // fetch, jamais pendant le rendu.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
     const id = setInterval(() => void refresh(), REFRESH_INTERVAL_MS);
@@ -148,25 +148,31 @@ function useLeaderboard() {
 
 const PODIUM_STYLES = {
   1: {
-    card: 'border-esgis-gold/60 bg-gradient-to-b from-esgis-gold/25 via-esgis-gold/10 to-transparent shadow-[0_0_80px_-20px_rgba(212,175,55,0.8)]',
-    accent: 'text-[#F5D77A]',
-    height: 'h-[clamp(9rem,22vh,15rem)]',
-    avatar: 'border-esgis-gold/70 bg-esgis-gold/15 text-[#F5D77A]',
-    label: 'CHAMPION',
+    order: 'md:order-2',
+    card: 'border-2 border-[#D4AF37] bg-[#FFFDF5] shadow-md',
+    badge: 'bg-[#FCF8E8] text-[#8A6D14] border-[#D4AF37]/60',
+    avatar: 'border-[#D4AF37] bg-[#FCF8E8] text-[#8A6D14]',
+    score: 'text-[#9E1B24]',
+    bar: 'bg-[#D4AF37] text-slate-950 h-14 sm:h-16',
+    label: '1er · Champion',
   },
   2: {
-    card: 'border-slate-300/40 bg-gradient-to-b from-slate-300/15 via-slate-300/5 to-transparent',
-    accent: 'text-slate-200',
-    height: 'h-[clamp(6.5rem,16vh,11rem)]',
-    avatar: 'border-slate-300/50 bg-slate-300/10 text-slate-200',
-    label: '2e PLACE',
+    order: 'md:order-1',
+    card: 'border border-slate-300 bg-white shadow-xs',
+    badge: 'bg-slate-100 text-slate-700 border-slate-300',
+    avatar: 'border-slate-300 bg-slate-100 text-slate-700',
+    score: 'text-slate-900',
+    bar: 'bg-slate-200 text-slate-800 h-10 sm:h-11',
+    label: '2e place',
   },
   3: {
-    card: 'border-amber-700/60 bg-gradient-to-b from-amber-700/25 via-amber-700/10 to-transparent',
-    accent: 'text-amber-400',
-    height: 'h-[clamp(5.5rem,14vh,9.5rem)]',
-    avatar: 'border-amber-600/60 bg-amber-700/15 text-amber-300',
-    label: '3e PLACE',
+    order: 'md:order-3',
+    card: 'border border-amber-300 bg-white shadow-xs',
+    badge: 'bg-amber-50 text-amber-800 border-amber-300',
+    avatar: 'border-amber-300 bg-amber-50 text-amber-800',
+    score: 'text-amber-800',
+    bar: 'bg-amber-100 text-amber-900 h-8 sm:h-9',
+    label: '3e place',
   },
 } as const;
 
@@ -175,51 +181,70 @@ function PodiumCard({ entry, place }: { entry: ScoreEntry; place: 1 | 2 | 3 }) {
 
   return (
     <div
-      className={`flex min-w-0 flex-1 flex-col items-end justify-end ${
-        place === 1 ? 'order-2' : place === 2 ? 'order-1' : 'order-3'
-      }`}
+      className={`scoreboard-rise flex min-w-0 flex-1 flex-col justify-end ${style.order}`}
     >
-      <div className="mb-4 w-full min-w-0 px-1 text-center scoreboard-rise">
-        <div
-          className={`mx-auto mb-2 flex items-center justify-center rounded-full border-2 font-black ${
-            style.avatar
-          } ${place === 1 ? 'h-20 w-20 text-2xl' : 'h-14 w-14 text-lg'}`}
-        >
-          {initials(entry.pseudo)}
-        </div>
-        <p
-          className={`mx-auto max-w-[18ch] truncate font-extrabold tracking-tight ${
-            place === 1 ? 'text-3xl sm:text-4xl' : 'text-xl sm:text-2xl'
-          }`}
-        >
-          {entry.pseudo}
-        </p>
-        <p className="truncate text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-          {entry.filiere}
-        </p>
-        <p className={`mt-1 font-mono text-3xl font-black tabular-nums sm:text-4xl ${style.accent}`}>
-          {entry.score}
-          <span className="ml-1 text-xs font-bold text-slate-400">PTS</span>
-        </p>
-      </div>
-
       <div
-        className={`flex w-full flex-col items-center justify-center gap-1 rounded-t-2xl border border-b-0 ${style.card} ${style.height}`}
+        className={`overflow-hidden rounded-2xl ${style.card}`}
       >
-        {place === 1 ? (
-          <Crown className="h-8 w-8 text-esgis-gold" aria-hidden="true" />
-        ) : (
-          <Medal className="h-6 w-6 text-slate-400" aria-hidden="true" />
-        )}
-        <span className={`font-mono text-4xl font-black leading-none ${style.accent}`}>
-          {place}
-        </span>
-        <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">
-          {style.label}
-        </span>
-        <span className="mt-1 font-mono text-xs text-slate-400">
-          {formatDuration(entry.totalTimeSeconds)} · niv. {entry.currentLevel}/5
-        </span>
+        <div className="p-3.5 sm:p-4">
+          <div className="flex items-center justify-between gap-2">
+            <span
+              className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wider ${style.badge}`}
+            >
+              {place === 1 ? (
+                <Crown className="h-3 w-3" aria-hidden="true" />
+              ) : (
+                <Medal className="h-3 w-3" aria-hidden="true" />
+              )}
+              {style.label}
+            </span>
+
+            <span className="font-mono text-[11px] font-semibold text-slate-500">
+              {formatDuration(entry.totalTimeSeconds)} · niv. {entry.currentLevel}/5
+            </span>
+          </div>
+
+          <div className="mt-2.5 flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <div
+                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border font-mono text-sm font-black ${style.avatar}`}
+              >
+                {initials(entry.pseudo)}
+              </div>
+              <div className="min-w-0">
+                <p
+                  className={`truncate font-black tracking-tight text-slate-900 ${
+                    place === 1 ? 'text-xl sm:text-2xl' : 'text-lg sm:text-xl'
+                  }`}
+                >
+                  {entry.pseudo}
+                </p>
+                <p className="truncate text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                  {entry.filiere}
+                </p>
+              </div>
+            </div>
+
+            <div className="shrink-0 text-right">
+              <p
+                className={`font-mono font-black tabular-nums leading-none ${
+                  place === 1 ? 'text-3xl sm:text-4xl' : 'text-2xl sm:text-3xl'
+                } ${style.score}`}
+              >
+                {entry.score}
+              </p>
+              <p className="mt-0.5 text-[9px] font-bold uppercase tracking-widest text-slate-400">
+                PTS
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div
+          className={`flex items-center justify-center font-mono text-lg font-black ${style.bar}`}
+        >
+          #{place}
+        </div>
       </div>
     </div>
   );
@@ -227,26 +252,28 @@ function PodiumCard({ entry, place }: { entry: ScoreEntry; place: 1 | 2 | 3 }) {
 
 function RankingRow({ entry, rank }: { entry: ScoreEntry; rank: number }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.03] px-3 py-3 transition-colors hover:bg-white/[0.06] sm:gap-4 sm:px-4">
-      <span className="w-8 shrink-0 text-center font-mono text-lg font-bold tabular-nums text-slate-500">
+    <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3.5 py-2 shadow-2xs">
+      <span className="w-7 shrink-0 text-center font-mono text-sm font-extrabold tabular-nums text-slate-500">
         {rank}
       </span>
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-xs font-bold text-slate-300">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 font-mono text-xs font-bold text-slate-700">
         {initials(entry.pseudo)}
       </div>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-base font-bold text-slate-100">{entry.pseudo}</p>
-        <p className="truncate text-[10px] uppercase tracking-wider text-slate-500">
+        <p className="truncate text-sm font-extrabold text-slate-900 sm:text-base">
+          {entry.pseudo}
+        </p>
+        <p className="truncate text-[10px] font-semibold uppercase tracking-wider text-slate-500">
           {entry.filiere}
         </p>
       </div>
       <span className="hidden shrink-0 font-mono text-xs text-slate-500 sm:block">
         niv. {entry.currentLevel}/5
       </span>
-      <span className="w-14 shrink-0 text-right font-mono text-xs text-slate-400">
+      <span className="w-12 shrink-0 text-right font-mono text-xs font-semibold tabular-nums text-slate-500">
         {formatDuration(entry.totalTimeSeconds)}
       </span>
-      <span className="w-16 shrink-0 text-right font-mono text-xl font-black tabular-nums text-[#F5D77A] sm:w-20 sm:text-2xl">
+      <span className="w-16 shrink-0 text-right font-mono text-lg font-black tabular-nums text-[#9E1B24] sm:text-xl">
         {entry.score}
       </span>
     </div>
@@ -257,92 +284,93 @@ export default function LeaderboardScreen() {
   const { entries, source, realtime, status, error, lastUpdate, refresh } =
     useLeaderboard();
 
+  const [pageIndex, setPageIndex] = useState(0);
+
   const top3 = entries.slice(0, 3);
-  const podium = [top3[1], top3[0], top3[2]].filter(
-    (entry): entry is ScoreEntry => Boolean(entry),
+  const podiumOrder: Array<{ entry: ScoreEntry; place: 1 | 2 | 3 }> = [
+    top3[1] ? { entry: top3[1], place: 2 } : null,
+    top3[0] ? { entry: top3[0], place: 1 } : null,
+    top3[2] ? { entry: top3[2], place: 3 } : null,
+  ].filter((item): item is { entry: ScoreEntry; place: 1 | 2 | 3 } =>
+    Boolean(item),
   );
-  const rest = entries.slice(3, 12);
+
+  const rest = entries.slice(3);
+  const totalPages = Math.max(1, Math.ceil(rest.length / ROWS_PER_PAGE));
+  const safePageIndex = pageIndex % totalPages;
+
+  useEffect(() => {
+    if (totalPages <= 1) return;
+    const id = setInterval(() => {
+      setPageIndex((prev) => (prev + 1) % totalPages);
+    }, PAGE_ROTATION_MS);
+    return () => clearInterval(id);
+  }, [totalPages]);
+
+  const pageOffset = safePageIndex * ROWS_PER_PAGE;
+  const visibleRest = rest.slice(pageOffset, pageOffset + ROWS_PER_PAGE);
 
   return (
-    <div className="relative flex min-h-screen flex-col overflow-hidden bg-[#05080f] text-slate-100 lg:h-screen">
-      {/* Fond : halos + grille technique */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_-10%,rgba(158,27,36,0.35),transparent_60%),radial-gradient(ellipse_at_90%_110%,rgba(212,175,55,0.16),transparent_55%)]"
-      />
-      <div aria-hidden="true" className="arena-grid pointer-events-none absolute inset-0" />
-
-      <header className="relative z-10 flex shrink-0 items-center justify-between gap-4 border-b border-white/10 px-4 py-3 sm:px-6">
-        <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-          <div className="rounded-xl bg-white p-1.5 shadow-lg shadow-black/40">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo-red.png" alt="ESGIS" className="h-8 w-auto sm:h-10" />
-          </div>
+    <div className="flex min-h-screen flex-col overflow-x-hidden bg-[#F4F6F9] text-slate-900 lg:h-screen lg:overflow-hidden">
+      <header className="flex shrink-0 items-center justify-between gap-4 border-b-2 border-[#9E1B24] bg-white px-4 py-2 sm:px-6">
+        <div className="flex min-w-0 items-center gap-3">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo-red.png" alt="ESGIS" className="h-8 w-auto sm:h-9" />
+          <div className="h-6 w-px bg-slate-200 hidden sm:block" />
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h1 className="truncate text-xl font-black tracking-tight sm:text-2xl">
-                DEV<span className="text-esgis-gold">ARENA</span>
+              <h1 className="truncate text-lg font-black tracking-tight text-slate-900 sm:text-xl">
+                DEV<span className="text-[#9E1B24]">ARENA</span>
               </h1>
-              <span className="hidden rounded-md border border-esgis-gold/40 bg-esgis-gold/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#F5D77A] sm:inline">
+              <span className="hidden rounded border border-[#D4AF37]/60 bg-[#FCF8E8] px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-[#8A6D14] sm:inline">
                 {CLUB.shortName}
               </span>
             </div>
-            <p className="truncate text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-400 sm:text-xs">
-              Classement en direct
+            <p className="truncate text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">
+              Classement officiel · Stand ESGIS
             </p>
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2 sm:gap-4">
-          <div className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-slate-300 sm:flex">
-            <Users className="h-3.5 w-3.5 text-esgis-gold" />
-            {entries.length} joueur{entries.length > 1 ? 's' : ''}
+        <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+          <div className="hidden items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 sm:flex">
+            <Users className="h-3.5 w-3.5 text-[#9E1B24]" />
+            <span className="font-mono tabular-nums">{entries.length}</span>{' '}
+            participant{entries.length > 1 ? 's' : ''}
           </div>
 
-          <div className="hidden text-right md:block">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
-              Heure locale
-            </p>
-            <p className="text-lg font-bold text-slate-200">
-              <LiveClock />
-            </p>
+          <div className="hidden rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 md:block">
+            <LiveClock />
           </div>
 
           <div
-            className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider ${
+            className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-[11px] font-extrabold uppercase tracking-wider ${
               realtime
-                ? 'border-emerald-400/40 bg-emerald-400/10 text-emerald-300'
-                : 'border-amber-400/30 bg-amber-400/10 text-amber-300'
+                ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+                : 'border-amber-300 bg-amber-50 text-amber-800'
             }`}
           >
-            <span className="relative flex h-2 w-2">
-              <span
-                className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-70 ${
-                  realtime ? 'bg-emerald-400' : 'bg-amber-400'
-                }`}
-              />
-              <span
-                className={`relative inline-flex h-2 w-2 rounded-full ${
-                  realtime ? 'bg-emerald-400' : 'bg-amber-400'
-                }`}
-              />
-            </span>
+            <span
+              className={`h-2 w-2 rounded-full ${
+                realtime ? 'bg-emerald-500' : 'bg-amber-500'
+              }`}
+            />
             {realtime ? 'Live' : source === 'supabase' ? 'Sync' : 'Démo'}
           </div>
         </div>
       </header>
 
-      <main className="relative z-10 flex min-h-0 flex-1 flex-col justify-center gap-5 px-4 py-4 sm:px-6 sm:py-5">
+      <main className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-3 px-4 py-3 sm:px-6 sm:py-4">
         {error && (
-          <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2.5 text-xs text-red-200">
-            <span className="flex items-center gap-2">
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-xl border border-red-300 bg-red-50 px-4 py-2 text-xs text-red-900">
+            <span className="flex items-center gap-2 font-semibold">
               <WifiOff className="h-4 w-4 shrink-0" />
               {error}
             </span>
             <button
               type="button"
               onClick={() => void refresh()}
-              className="rounded-lg border border-red-300/30 px-3 py-1 font-bold uppercase tracking-wider transition hover:bg-red-500/20"
+              className="rounded-lg border border-red-300 bg-white px-3 py-1 font-bold uppercase tracking-wider text-red-800 transition hover:bg-red-100 cursor-pointer"
             >
               Réessayer
             </button>
@@ -350,59 +378,65 @@ export default function LeaderboardScreen() {
         )}
 
         {entries.length === 0 ? (
-          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-6 text-center">
-            <div className="rounded-full border border-esgis-gold/30 bg-esgis-gold/10 p-6">
-              <Trophy className="h-14 w-14 text-esgis-gold" />
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 text-center">
+            <div className="rounded-2xl border-2 border-[#D4AF37] bg-[#FCF8E8] p-5">
+              <Trophy className="h-12 w-12 text-[#9E1B24]" />
             </div>
             <div>
-              <h2 className="text-3xl font-black tracking-tight sm:text-4xl">
+              <h2 className="text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">
                 {status === 'loading'
                   ? 'Chargement du classement…'
-                  : 'Le classement attend son premier héros'}
+                  : 'En attente du premier participant'}
               </h2>
-              <p className="mx-auto mt-2 max-w-xl text-sm text-slate-400">
-                Passe sur le stand, code les 5 niveaux et ton score apparaîtra ici
-                instantanément.
+              <p className="mx-auto mt-2 max-w-md text-sm text-slate-600">
+                Passe sur les PC du stand {CLUB.shortName}, relève les 5 défis
+                et ton score apparaîtra ici en direct.
               </p>
-            </div>
-            <div className="flex flex-wrap items-center justify-center gap-4 rounded-2xl border border-white/10 bg-white/5 px-5 py-4">
-              <div className="rounded-xl bg-white p-2">
-                <JoinQrCode size={96} />
-              </div>
-              <div className="text-left">
-                <p className="text-sm font-bold">Rejoins le {CLUB.name}</p>
-                <p className="text-xs text-slate-400">
-                  Scanne le QR code avec ton téléphone
-                </p>
-              </div>
             </div>
           </div>
         ) : (
           <>
-            {/* Podium Top 3 */}
+            {/* Top 3 Podium en haut (centré, horizontal) */}
             <section
-              aria-label="Podium"
-              className="flex shrink-0 items-end justify-center gap-2 pt-2 sm:gap-4"
+              aria-label="Podium Top 3"
+              className="grid shrink-0 grid-cols-1 items-end gap-3 md:grid-cols-3"
             >
-              {podium.map((entry) => {
-                const place = (entries.indexOf(entry) + 1) as 1 | 2 | 3;
-                return <PodiumCard key={entry.id} entry={entry} place={place} />;
-              })}
+              {podiumOrder.map(({ entry, place }) => (
+                <PodiumCard key={entry.id} entry={entry} place={place} />
+              ))}
             </section>
 
-            {/* Rangs 4 et suivants */}
+            {/* Suite du classement en dessous (rangs 4+, paginé par 8) */}
             {rest.length > 0 && (
-              <section aria-label="Suite du classement" className="min-h-0">
-                <div className="mb-2 flex items-center justify-between px-1 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">
-                  <span>Suite du classement</span>
-                  <span className="flex items-center gap-1.5">
-                    <Radio className="h-3 w-3" />
-                    {source === 'supabase' ? 'Supabase' : 'Stockage mémoire'}
+              <section
+                aria-label="Suite du classement"
+                className="flex min-h-0 flex-1 flex-col rounded-2xl border border-slate-200 bg-white/80 p-3 sm:p-4"
+              >
+                <div className="mb-2 flex shrink-0 items-center justify-between gap-2 text-[11px] font-extrabold uppercase tracking-[0.18em] text-slate-500">
+                  <span>
+                    Rangs {pageOffset + 4} à {pageOffset + 3 + visibleRest.length}
                   </span>
+
+                  <div className="flex items-center gap-3">
+                    {totalPages > 1 && (
+                      <span className="font-mono text-[#9E1B24]">
+                        Page {safePageIndex + 1}/{totalPages}
+                      </span>
+                    )}
+                    <span className="flex items-center gap-1.5 text-slate-400">
+                      <Radio className="h-3 w-3" />
+                      {source === 'supabase' ? 'Supabase' : 'Mémoire'}
+                    </span>
+                  </div>
                 </div>
-                <div className="grid gap-2 overflow-hidden lg:grid-cols-2">
-                  {rest.map((entry, index) => (
-                    <RankingRow key={entry.id} entry={entry} rank={index + 4} />
+
+                <div className="grid min-h-0 flex-1 content-start gap-2 overflow-hidden md:grid-cols-2">
+                  {visibleRest.map((entry, index) => (
+                    <RankingRow
+                      key={entry.id}
+                      entry={entry}
+                      rank={pageOffset + index + 4}
+                    />
                   ))}
                 </div>
               </section>
@@ -411,27 +445,28 @@ export default function LeaderboardScreen() {
         )}
       </main>
 
-      <footer className="relative z-10 flex shrink-0 items-center justify-between gap-4 border-t border-white/10 px-4 py-3 sm:px-6">
+      <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-slate-200 bg-white px-4 py-2 sm:px-6">
         <div className="min-w-0">
-          <p className="text-sm font-extrabold tracking-tight sm:text-base">
-            Rejoins le <span className="text-esgis-gold">{CLUB.name}</span>
+          <p className="text-xs font-extrabold tracking-tight text-slate-900 sm:text-sm">
+            Rejoins le <span className="text-[#9E1B24]">{CLUB.name}</span>
           </p>
-          <p className="text-[11px] text-slate-400">
-            Ateliers · Projets · Hackathons · Communauté
+          <p className="text-[11px] text-slate-500">
+            Ateliers · Projets · Hackathons · Scanne le QR code pour le groupe
+            WhatsApp
           </p>
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="hidden text-right text-[10px] leading-tight text-slate-500 sm:block">
+          <div className="hidden text-right text-[10px] leading-tight text-slate-400 sm:block">
             <p className="font-semibold uppercase tracking-[0.18em]">
-              Dernière mise à jour
+              Synchronisation
             </p>
-            <p className="font-mono text-[11px] text-slate-300">
+            <p className="font-mono text-[11px] font-semibold text-slate-600">
               {lastUpdate ? lastUpdate.toLocaleTimeString('fr-FR') : '—'}
             </p>
           </div>
-          <div className="rounded-lg bg-white p-1.5">
-            <JoinQrCode size={88} />
+          <div className="rounded-lg border border-slate-200 bg-white p-1">
+            <JoinQrCode size={52} />
           </div>
         </div>
       </footer>

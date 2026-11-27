@@ -263,13 +263,13 @@ export function normalizeColor(input: string): string | null {
   return null;
 }
 
-/** Convertit une longueur CSS en pixels (px ou rem). */
+/** Convertit une longueur CSS en pixels (px, rem ou em). */
 export function parseLength(input: string): number | null {
   const value = input.trim().toLowerCase();
   if (value === "0") {
     return 0;
   }
-  const match = value.match(/^(-?\d*\.?\d+)(px|rem)$/);
+  const match = value.match(/^(-?\d*\.?\d+)(px|r?em)$/);
   if (!match) {
     return null;
   }
@@ -277,7 +277,7 @@ export function parseLength(input: string): number | null {
   if (!Number.isFinite(amount)) {
     return null;
   }
-  return match[2] === "rem" ? amount * 16 : amount;
+  return match[2] === "rem" || match[2] === "em" ? amount * 16 : amount;
 }
 
 /**

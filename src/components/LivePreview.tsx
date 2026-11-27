@@ -2,17 +2,25 @@
 
 import React from 'react';
 import { Eye, Terminal } from 'lucide-react';
+import { getLevel, isLevelId } from '@/lib/levels';
 
 interface LivePreviewProps {
   code: string;
   levelId: number;
 }
 
+function escapeInlineScript(code: string): string {
+  return code.replace(/<\/script/gi, '<\\/script');
+}
+
 export default function LivePreview({ code, levelId }: LivePreviewProps) {
-  // Pour les niveaux 1 à 3 (HTML, CSS, JS DOM), on génère un aperçu web complet
+  const level = isLevelId(levelId) ? getLevel(levelId) : null;
+
+  // Pour les niveaux 1 à 3 (HTML, CSS, JS DOM), on génère un aperçu web fidèle
   const getSrcDoc = () => {
     if (levelId === 2) {
-      // Niveau 2 : CSS appliqué sur le bouton #cta attendu par le Pôle 2
+      const buttonHtml =
+        level?.previewHtml ?? '<button id="cta">Rejoindre le Club Dev</button>';
       return `
         <!DOCTYPE html>
         <html>
@@ -23,14 +31,15 @@ export default function LivePreview({ code, levelId }: LivePreviewProps) {
             </style>
           </head>
           <body>
-            <button id="cta">Rejoindre ESGIS</button>
+            ${buttonHtml}
           </body>
         </html>
       `;
     }
 
     if (levelId === 3) {
-      // Niveau 3 : DOM avec #btn et #count attendus par le Pôle 2
+      const domHtml =
+        level?.previewHtml ?? '<button id="btn">+1</button>\n<p id="count">0</p>';
       return `
         <!DOCTYPE html>
         <html>
@@ -42,9 +51,8 @@ export default function LivePreview({ code, levelId }: LivePreviewProps) {
             </style>
           </head>
           <body>
-            <button id="btn">Cliquer (+1)</button>
-            <div id="count">0</div>
-            <script>${code}<\/script>
+            ${domHtml}
+            <script>${escapeInlineScript(code)}</script>
           </body>
         </html>
       `;

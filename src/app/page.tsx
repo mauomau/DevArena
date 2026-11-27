@@ -2,11 +2,8 @@ import Link from 'next/link';
 import {
   ArrowRight,
   Clock,
-  Code2,
-  Lightbulb,
-  Medal,
-  SkipForward,
-  Sparkles,
+  Monitor,
+  ShieldCheck,
   Trophy,
 } from 'lucide-react';
 import JoinQrCode from '@/components/JoinQrCode';
@@ -19,65 +16,71 @@ const TOTAL_DURATION_SECONDS = LEVELS.reduce(
   0,
 );
 
-const TOTAL_DURATION_LABEL = `${Math.floor(TOTAL_DURATION_SECONDS / 60)}:${String(
+const TOTAL_DURATION_LABEL = `${Math.floor(TOTAL_DURATION_SECONDS / 60)}m ${String(
   TOTAL_DURATION_SECONDS % 60,
-).padStart(2, '0')}`;
+).padStart(2, '0')}s`;
 
 const RULES = [
   {
-    icon: Trophy,
-    title: 'Points par niveau',
-    text: `De ${LEVELS[0].basePoints} à ${LEVELS[LEVELS.length - 1].basePoints} pts selon la difficulté, soit ${TOTAL_BASE_POINTS} pts de base.`,
+    code: '01',
+    title: 'Temps de lecture',
+    detail: `${GAME_CONFIG.readingWindowSeconds} s par épreuve avant le départ du chrono, ou démarrage immédiat au clic.`,
   },
   {
-    icon: Clock,
-    title: 'Bonus de rapidité',
-    text: `+${GAME_CONFIG.speedBonusPerSecond} pts par seconde restante au chrono. La vitesse fait la différence.`,
+    code: '02',
+    title: 'Bonus rapidité',
+    detail: `+${GAME_CONFIG.speedBonusPerSecond} pts par seconde restante à la validation. La précision paie autant que la vitesse.`,
   },
   {
-    icon: Lightbulb,
-    title: 'Indice',
-    text: `Bloqué ? Débloque une aide, avec une pénalité de ${GAME_CONFIG.hintPenalty} pts sur le niveau.`,
+    code: '03',
+    title: 'Indice & passage',
+    detail: `Indice à -${GAME_CONFIG.hintPenalty} pts. Option « Passer » (0 pt) débloquée après ${GAME_CONFIG.skipAvailableAfterSeconds} s.`,
   },
   {
-    icon: SkipForward,
-    title: 'Passer',
-    text: `Disponible après ${GAME_CONFIG.skipAvailableAfterSeconds}s. Le niveau rapporte 0 pt, mais tu continues l'aventure.`,
+    code: '04',
+    title: 'Équité stand',
+    detail: 'Parties jouées uniquement sur les PC du stand, protégées par code PIN et chrono calculé côté serveur.',
   },
 ] as const;
 
 export default function HomePage() {
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="border-b-4 border-[#9E1B24] bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-4">
+    <div className="min-h-screen bg-[#F4F6F9] text-slate-900 flex flex-col">
+      <header className="border-b-2 border-[#9E1B24] bg-white">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-3.5">
           <div className="flex items-center gap-3">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo-red.png" alt="Logo ESGIS" className="h-10 w-auto" />
-            <div className="hidden h-7 w-px bg-slate-200 sm:block" />
-            <span className="hidden rounded-md border border-[#D4AF37]/60 bg-[#FCF8E8] px-2.5 py-1 text-xs font-extrabold uppercase tracking-wider text-[#947618] sm:inline">
-              {CLUB.shortName}
-            </span>
+            <img src="/logo-red.png" alt="ESGIS" className="h-9 w-auto" />
+            <div className="h-6 w-px bg-slate-200 hidden sm:block" />
+            <div className="leading-tight">
+              <span className="block text-sm font-black tracking-tight text-slate-900">
+                DEV<span className="text-[#9E1B24]">ARENA</span>
+              </span>
+              <span className="block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                {CLUB.name}
+              </span>
+            </div>
           </div>
 
-          <nav className="flex items-center gap-2 text-sm font-semibold">
-            <Link
-              href="/leaderboard"
-              className="hidden rounded-lg px-3 py-2 text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 sm:inline"
-            >
-              Classement
-            </Link>
+          <nav className="flex items-center gap-2 text-xs sm:text-sm font-bold">
             <Link
               href="/play"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[#9E1B24] px-4 py-2 font-bold text-white shadow-sm transition hover:bg-[#7A1219]"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-slate-700 transition hover:bg-slate-100 hover:text-slate-900"
             >
-              Jouer <ArrowRight className="h-4 w-4" />
+              <Monitor className="h-3.5 w-3.5 text-[#9E1B24]" />
+              PC Stand
+            </Link>
+            <Link
+              href="/leaderboard"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[#9E1B24] px-3.5 py-2 text-white shadow-xs transition hover:bg-[#7A1219]"
+            >
+              Classement <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </nav>
         </div>
       </header>
 
-      <main>
+      <main className="flex-1">
         {/* HERO */}
         <section className="relative overflow-hidden bg-[#0B1220] text-white">
           <div
@@ -89,57 +92,56 @@ export default function HomePage() {
             className="pointer-events-none absolute inset-0 opacity-[0.35] [background-image:linear-gradient(rgba(255,255,255,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.05)_1px,transparent_1px)] [background-size:52px_52px] [mask-image:radial-gradient(ellipse_at_50%_0%,black,transparent_75%)]"
           />
 
-          <div className="relative mx-auto grid max-w-6xl gap-10 px-5 py-14 lg:grid-cols-[1.15fr_0.85fr] lg:items-center lg:py-20">
-            <div>
-              <span className="inline-flex items-center gap-2 rounded-full border border-[#D4AF37]/40 bg-[#D4AF37]/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-[#F5D77A]">
-                <Sparkles className="h-3.5 w-3.5" />
-                Journée d’intégration des clubs · ESGIS Bénin
-              </span>
+          <div className="relative mx-auto grid max-w-6xl gap-10 px-5 py-12 lg:grid-cols-12 lg:items-start lg:py-16">
+            <div className="lg:col-span-7 space-y-6">
+              <div className="inline-flex items-center gap-2 border-l-4 border-[#D4AF37] pl-3 text-xs font-extrabold uppercase tracking-[0.18em] text-[#F5D77A]">
+                Journée d’intégration · ESGIS Bénin
+              </div>
 
-              <h1 className="mt-5 text-4xl font-black leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl">
-                Code. Marque.
-                <br />
-                <span className="bg-gradient-to-r from-[#F5D77A] via-[#D4AF37] to-[#F5D77A] bg-clip-text text-transparent">
-                  Rejoins le Club Dev.
+              <h1 className="text-4xl font-black leading-[1.06] tracking-tight text-white sm:text-5xl">
+                Cinq épreuves de code.
+                <span className="block text-[#F5D77A]">
+                  Un classement projeté en direct.
                 </span>
               </h1>
 
-              <p className="mt-5 max-w-xl text-base leading-relaxed text-slate-300 sm:text-lg">
-                Cinq défis chronométrés, un éditeur de code intégré, un
-                classement projeté en direct. Montre ce que tu sais faire et
-                entre dans le Top 3.
+              <p className="max-w-xl text-base leading-relaxed text-slate-300">
+                Passe sur le stand du {CLUB.shortName}, résous cinq défis du
+                HTML à l’algorithmique sous chronomètre serveur et défends ta
+                place sur le podium.
               </p>
 
-              <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-                <Link
-                  href="/play"
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#D4AF37] via-[#E5C158] to-[#D4AF37] px-6 py-3.5 text-base font-extrabold text-slate-950 shadow-lg shadow-black/30 transition hover:brightness-105"
-                >
-                  Entrer dans l’arène <ArrowRight className="h-5 w-5" />
-                </Link>
+              <div className="flex flex-wrap items-center gap-3 pt-1">
                 <Link
                   href="/leaderboard"
-                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/20 bg-white/5 px-6 py-3.5 text-base font-bold text-white backdrop-blur transition hover:bg-white/10"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#D4AF37] px-5 py-3 text-sm font-extrabold text-slate-950 shadow-lg shadow-black/30 transition hover:brightness-105"
                 >
-                  <Trophy className="h-5 w-5 text-[#D4AF37]" />
-                  Voir le classement
+                  <Trophy className="h-4 w-4" />
+                  Voir le classement en direct
                 </Link>
+                <a
+                  href="#rejoindre"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/20 bg-white/5 px-5 py-3 text-sm font-bold text-white backdrop-blur transition hover:bg-white/10"
+                >
+                  Rejoindre le Club Dev
+                </a>
               </div>
 
-              <dl className="mt-10 grid max-w-lg grid-cols-3 gap-3">
+              <dl className="grid grid-cols-2 gap-3 pt-2 sm:grid-cols-4">
                 {[
-                  { label: 'Niveaux', value: `${LEVELS.length}` },
-                  { label: 'Chrono total', value: TOTAL_DURATION_LABEL },
-                  { label: 'Points max', value: `${MAX_TOTAL_SCORE}` },
+                  { label: 'Épreuves', value: `${LEVELS.length}` },
+                  { label: 'Temps de jeu', value: TOTAL_DURATION_LABEL },
+                  { label: 'Score max', value: `${MAX_TOTAL_SCORE} pts` },
+                  { label: 'Base', value: `${TOTAL_BASE_POINTS} pts` },
                 ].map((stat) => (
                   <div
                     key={stat.label}
-                    className="rounded-xl border border-white/10 bg-white/5 px-4 py-3"
+                    className="rounded-xl border border-white/10 bg-white/5 px-3.5 py-3 backdrop-blur"
                   >
                     <dt className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
                       {stat.label}
                     </dt>
-                    <dd className="mt-0.5 font-mono text-2xl font-black text-[#F5D77A]">
+                    <dd className="mt-1 font-mono text-xl font-black tabular-nums text-[#F5D77A]">
                       {stat.value}
                     </dd>
                   </div>
@@ -147,131 +149,142 @@ export default function HomePage() {
               </dl>
             </div>
 
-            {/* Carte "parcours" */}
-            <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 shadow-2xl shadow-black/30 backdrop-blur">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-400">
-                  Le parcours
-                </p>
-                <Code2 className="h-4 w-4 text-[#D4AF37]" />
+            {/* PROGRAMME */}
+            <div className="lg:col-span-5 rounded-2xl border border-white/10 bg-white/[0.04] shadow-2xl shadow-black/30 backdrop-blur overflow-hidden">
+              <div className="flex items-center justify-between border-b border-white/10 bg-white/[0.03] px-4 py-3">
+                <span className="text-xs font-extrabold uppercase tracking-[0.18em] text-slate-300">
+                  Programme des 5 niveaux
+                </span>
+                <span className="font-mono text-[11px] font-bold text-[#F5D77A]">
+                  +{GAME_CONFIG.readingWindowSeconds}s lecture / niveau
+                </span>
               </div>
 
-              <ol className="mt-4 space-y-2">
+              <ol className="divide-y divide-white/10">
                 {LEVELS.map((level) => (
                   <li
                     key={level.id}
-                    className="flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.03] px-3 py-2.5"
+                    className="flex items-center gap-3.5 px-4 py-3"
                   >
-                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#9E1B24]/30 font-mono text-xs font-bold text-[#F5D77A]">
-                      {level.id}
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[#9E1B24]/35 font-mono text-xs font-bold text-[#F5D77A]">
+                      0{level.id}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-bold">{level.title}</p>
-                      <p className="text-[10px] uppercase tracking-wider text-slate-400">
-                        {level.theme} · {level.durationSeconds}s
+                      <p className="truncate text-sm font-bold text-white">
+                        {level.title}
+                      </p>
+                      <p className="text-[11px] text-slate-400">
+                        {level.theme} ·{' '}
+                        <span className="font-mono">{level.durationSeconds}s</span>
                       </p>
                     </div>
-                    <span className="shrink-0 font-mono text-sm font-bold text-slate-300">
+                    <span className="shrink-0 font-mono text-sm font-bold tabular-nums text-slate-200">
                       {level.basePoints}
-                      <span className="ml-0.5 text-[10px] text-slate-500">pts</span>
+                      <span className="ml-1 text-[10px] text-slate-500">pts</span>
                     </span>
                   </li>
                 ))}
               </ol>
 
-              <p className="mt-4 flex items-center gap-2 text-[11px] text-slate-400">
-                <Medal className="h-3.5 w-3.5 shrink-0 text-[#D4AF37]" />
-                Égalité ? Le temps total le plus court l’emporte.
-              </p>
+              <div className="flex items-center justify-between border-t border-white/10 bg-black/20 px-4 py-2.5 text-[11px] font-medium text-slate-300">
+                <span className="flex items-center gap-1.5">
+                  <Clock className="h-3.5 w-3.5 text-[#D4AF37]" />
+                  Départage au temps total le plus court
+                </span>
+              </div>
             </div>
           </div>
         </section>
 
         {/* RÈGLES */}
-        <section className="mx-auto max-w-6xl px-5 py-14">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-[#9E1B24]">
-                Système de scoring
-              </p>
-              <h2 className="mt-1 text-2xl font-black tracking-tight sm:text-3xl">
-                Simple à comprendre, difficile à maîtriser
-              </h2>
-            </div>
-            <p className="max-w-sm text-sm text-slate-500">
-              Chaque seconde compte : un niveau validé vite vaut plus cher qu’un
-              niveau validé lentement.
-            </p>
-          </div>
-
-          <div className="mt-7 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {RULES.map((rule) => (
-              <div
-                key={rule.title}
-                className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
-              >
-                <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-[#9E1B24]/15 bg-[#FDF2F3] text-[#9E1B24]">
-                  <rule.icon className="h-5 w-5" />
-                </div>
-                <h3 className="mt-3 text-sm font-extrabold text-slate-900">
-                  {rule.title}
-                </h3>
-                <p className="mt-1 text-sm leading-relaxed text-slate-600">
-                  {rule.text}
+        <section className="border-b border-slate-200 bg-[#F4F6F9]">
+          <div className="mx-auto max-w-6xl px-5 py-12">
+            <div className="mb-7 flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-extrabold uppercase tracking-[0.2em] text-[#9E1B24]">
+                  Règlement
                 </p>
+                <h2 className="mt-1 text-2xl font-black tracking-tight text-slate-900">
+                  Comment se jouent les points
+                </h2>
               </div>
-            ))}
+              <p className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <ShieldCheck className="h-4 w-4 text-[#9E1B24]" />
+                Les pseudos, filières, niveaux et scores sont affichés sur
+                l’écran public.
+              </p>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {RULES.map((rule) => (
+                <div
+                  key={rule.code}
+                  className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs space-y-2"
+                >
+                  <span className="font-mono text-xs font-bold text-[#9E1B24]">
+                    {rule.code}
+                  </span>
+                  <h3 className="text-sm font-extrabold text-slate-900">
+                    {rule.title}
+                  </h3>
+                  <p className="text-xs leading-relaxed text-slate-600">
+                    {rule.detail}
+                  </p>
+                </div>
+              ))}
+            </div>
           </div>
         </section>
 
         {/* REJOINDRE */}
-        <section className="border-y border-slate-200 bg-white">
-          <div className="mx-auto flex max-w-6xl flex-col items-center gap-8 px-5 py-12 md:flex-row md:justify-between">
-            <div className="max-w-xl">
-              <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-[#9E1B24]">
-                Après la partie
+        <section id="rejoindre" className="mx-auto max-w-6xl px-5 py-12">
+          <div className="flex flex-col items-center justify-between gap-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8 md:flex-row">
+            <div className="max-w-lg space-y-3">
+              <p className="text-[11px] font-extrabold uppercase tracking-[0.2em] text-[#9E1B24]">
+                Communauté ESGIS
               </p>
-              <h2 className="mt-1 text-2xl font-black tracking-tight sm:text-3xl">
-                Ton score tombe, le Club Dev t’attend.
+              <h2 className="text-2xl font-black tracking-tight text-slate-900">
+                Rejoins le groupe WhatsApp du {CLUB.shortName}
               </h2>
-              <p className="mt-3 text-sm leading-relaxed text-slate-600">
-                Scanne le QR code pour rejoindre le groupe WhatsApp : ateliers,
-                projets open source, hackathons et entraide toute l’année.
+              <p className="text-sm leading-relaxed text-slate-600">
+                Ateliers pratiques, projets open source, entraide entre filières
+                (L1 à M2) et préparation des prochains hackathons.
               </p>
-              <Link
-                href="/play"
-                className="mt-5 inline-flex items-center gap-2 rounded-xl bg-[#9E1B24] px-5 py-3 text-sm font-extrabold text-white shadow-sm transition hover:bg-[#7A1219]"
-              >
-                Tester le défi <ArrowRight className="h-4 w-4" />
-              </Link>
+              <div className="pt-2">
+                <Link
+                  href="/leaderboard"
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#9E1B24] px-4 py-2.5 text-xs font-extrabold text-white transition hover:bg-[#7A1219]"
+                >
+                  Ouvrir le classement projeté <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              </div>
             </div>
 
-            <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-[#D4AF37] bg-[#FCF8E8] p-5 text-center">
-              <div className="rounded-xl bg-white p-3 shadow-sm">
-                <JoinQrCode size={168} />
+            <div className="flex flex-col items-center gap-2.5 rounded-xl border-2 border-[#D4AF37] bg-[#FCF8E8] p-4 text-center">
+              <div className="rounded-lg bg-white p-2.5 shadow-xs">
+                <JoinQrCode size={144} />
               </div>
-              <p className="text-sm font-extrabold text-slate-900">
-                Groupe WhatsApp du {CLUB.name}
-              </p>
-              <p className="text-[11px] text-slate-500">
-                Ouvre l’appareil photo de ton téléphone
+              <p className="text-xs font-extrabold text-slate-900">
+                Scanne pour rejoindre le groupe
               </p>
             </div>
           </div>
         </section>
       </main>
 
-      <footer className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-2 px-5 py-6 text-xs text-slate-500 sm:flex-row">
-        <p>
-          © {new Date().getFullYear()} {CLUB.name} — Projet open source
-        </p>
-        <div className="flex items-center gap-4 font-semibold">
-          <Link href="/play" className="transition hover:text-[#9E1B24]">
-            Jouer
-          </Link>
-          <Link href="/leaderboard" className="transition hover:text-[#9E1B24]">
-            Classement
-          </Link>
+      <footer className="border-t border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-2 px-5 py-5 text-xs text-slate-500 sm:flex-row">
+          <p>
+            © {new Date().getFullYear()} {CLUB.name} — DevArena
+          </p>
+          <div className="flex items-center gap-4 font-semibold">
+            <Link href="/leaderboard" className="transition hover:text-[#9E1B24]">
+              Classement
+            </Link>
+            <Link href="/play" className="transition hover:text-[#9E1B24]">
+              Accès stand
+            </Link>
+          </div>
         </div>
       </footer>
     </div>

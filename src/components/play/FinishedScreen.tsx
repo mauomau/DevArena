@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import {
   CheckCircle2,
   Loader2,
@@ -9,6 +10,7 @@ import {
 
 import JoinQrCode from "@/components/JoinQrCode";
 import { MAX_TOTAL_SCORE } from "@/lib/scoring";
+import { gameSounds } from "@/lib/sound";
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 
@@ -39,6 +41,14 @@ export default function FinishedScreen({
   onRetrySave,
   onReset,
 }: FinishedScreenProps) {
+  useEffect(() => {
+    if (score > 0) {
+      gameSounds.victory();
+    } else {
+      gameSounds.start();
+    }
+  }, [score]);
+
   const rankLabel = rank === null ? null : rank === 1 ? "1er" : `${rank}e`;
 
   return (

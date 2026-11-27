@@ -18,7 +18,7 @@ test("une feuille de style complète valide le niveau 2", () => {
   assert.equal(result.checks.length, 5);
 });
 
-test("les couleurs rgb, les rem et les sélecteurs multiples sont acceptés", () => {
+test("les couleurs rgb, les rem, les em et les sélecteurs multiples sont acceptés", () => {
   const result = validateLevel2(`
     button, .autre {
       background: rgb(11, 110, 79) url(fond.png);
@@ -29,6 +29,17 @@ test("les couleurs rgb, les rem et les sélecteurs multiples sont acceptés", ()
     }
   `);
   assert.equal(result.valid, true);
+
+  const emResult = validateLevel2(`
+    #cta {
+      background-color: #0B6E4F;
+      color: white;
+      padding: 1em;
+      border-radius: 0.5em;
+      font-weight: bold;
+    }
+  `);
+  assert.equal(emResult.valid, true);
 });
 
 test("un style inline sur le bouton #cta est accepté", () => {

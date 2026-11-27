@@ -11,7 +11,13 @@ export default function PlayPage() {
 
   // Accueil
   if (game.step === "intro") {
-    return <IntroScreen onStart={game.startGame} />;
+    return (
+      <IntroScreen
+        onStart={game.startGame}
+        isStarting={game.isStarting}
+        startError={game.startError}
+      />
+    );
   }
 
   // Fin de partie
@@ -43,6 +49,8 @@ export default function PlayPage() {
       currentLevel={game.currentLevel}
       levelIndex={game.levelIndex}
       code={game.code}
+      readingSeconds={game.readingSeconds}
+      isReading={game.isReading}
       remainingSeconds={game.remainingSeconds}
       skipRemainingSeconds={game.skipRemainingSeconds}
       canSkip={game.canSkip}
@@ -53,6 +61,7 @@ export default function PlayPage() {
       validation={game.validation}
       isSubmitting={game.isSubmitting}
       error={game.error}
+      onStartLevelNow={() => void game.startLevelNow()}
       onCodeChange={game.updateCode}
       onUseHint={game.revealHint}
       onSubmit={() => game.submitAttempt(false)}
