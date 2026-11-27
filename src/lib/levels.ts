@@ -43,13 +43,15 @@ export const LEVELS: readonly PublicLevel[] = [
       "Affiche un titre principal (balise <h1>) dont le texte est exactement « Hello ESGIS ». " +
       "Respecte les majuscules et l'orthographe.",
     starterCode: "<!-- Écris ton code HTML ici -->\n",
-    hint: "Utilise simplement : <h1>Hello ESGIS</h1>",
+    hint:
+      "En HTML, un titre principal s'écrit avec la balise ouvrante <h1> et fermante </h1>. " +
+      "Vérifie la casse exacte : « Hello ESGIS ».",
   },
   {
     id: 2,
     title: "Le Styliste",
     theme: "CSS",
-    durationSeconds: 60,
+    durationSeconds: 75,
     basePoints: 150,
     language: "css",
     statement:
@@ -59,13 +61,12 @@ export const LEVELS: readonly PublicLevel[] = [
       "/* Style le bouton #cta aux couleurs de l'ESGIS */\n" +
       "#cta {\n  /* À toi de jouer */\n}\n",
     hint:
-      "#cta {\n" +
-      "  background-color: #0B6E4F;\n" +
-      "  color: #FFFFFF;\n" +
-      "  padding: 12px 20px;\n" +
-      "  border-radius: 8px;\n" +
-      "  font-weight: bold;\n" +
-      "}",
+      "Cible #cta { ... } et définis ces 5 propriétés :\n" +
+      "• background-color (#0B6E4F)\n" +
+      "• color (#FFFFFF ou white)\n" +
+      "• padding (>= 12px sur chaque côté)\n" +
+      "• border-radius (>= 8px)\n" +
+      "• font-weight (bold ou >= 600)",
     previewHtml: '<button id="cta">Rejoindre le Club Dev</button>',
   },
   {
@@ -83,24 +84,22 @@ export const LEVELS: readonly PublicLevel[] = [
       '// <button id="btn">+1</button> <p id="count">0</p>\n' +
       "// Écoute le clic sur le bouton et incrémente le compteur.\n",
     hint:
-      'const bouton = document.getElementById("btn");\n' +
-      'const compteur = document.getElementById("count");\n\n' +
-      'bouton.addEventListener("click", () => {\n' +
-      '  compteur.textContent = Number(compteur.textContent) + 1;\n' +
-      "});",
+      "1. Sélectionne #btn et #count avec document.getElementById(...).\n" +
+      '2. Écoute "click" sur le bouton via addEventListener.\n' +
+      "3. Dans le callback, convertis le texte actuel avec Number(...) + 1 et réassigne .textContent.",
     previewHtml: '<button id="btn">+1</button>\n<p id="count">0</p>',
   },
   {
     id: 4,
     title: "Bug Hunter",
     theme: "Debug",
-    durationSeconds: 90,
+    durationSeconds: 75,
     basePoints: 250,
     language: "javascript",
     statement:
       "La fonction compterVoyelles(texte) doit renvoyer le nombre de voyelles (a, e, i, o, u, y) " +
-      "d'un texte, sans tenir compte de la casse. Deux erreurs se sont glissées dans le script : " +
-      "corrige-les sans changer son nom.",
+      "d'un texte, sans tenir compte de la casse (ex : compterVoyelles(\"ESGIS\") → 2). " +
+      "Deux erreurs se sont glissées dans le script : corrige-les sans changer son nom.",
     starterCode:
       "// Compte les voyelles (a, e, i, o, u, y) d'un texte.\n" +
       "// Attention : deux erreurs se sont glissées dans ce script !\n" +
@@ -115,8 +114,8 @@ export const LEVELS: readonly PublicLevel[] = [
       "  return total;\n" +
       "}\n",
     hint:
-      "Deux pistes : la boucle oublie le dernier caractère (pense à texte.length), " +
-      "et les majuscules ne sont jamais converties en minuscules (toLowerCase).",
+      "Deux pistes : la boucle s'arrête trop tôt (regarde la borne de fin) " +
+      "et les majuscules ne sont pas converties en minuscules avant de tester voyelles.includes(...).",
   },
   {
     id: 5,
@@ -127,8 +126,8 @@ export const LEVELS: readonly PublicLevel[] = [
     language: "javascript",
     statement:
       "Écris la fonction estPalindrome(texte) qui renvoie true si le texte se lit de la même façon " +
-      "dans les deux sens, et false sinon. Ignore les espaces et la casse. " +
-      "Une chaîne vide est considérée comme un palindrome.",
+      "dans les deux sens, et false sinon (ex : estPalindrome(\"Elu par cette crapule\") → true). " +
+      "Ignore les espaces et la casse. Une chaîne vide est considérée comme un palindrome.",
     starterCode:
       "// Retourne true si texte est un palindrome, false sinon.\n" +
       "// Ignore les espaces et la casse.\n" +
@@ -136,9 +135,9 @@ export const LEVELS: readonly PublicLevel[] = [
       "  return false;\n" +
       "}\n",
     hint:
-      'Nettoie le texte puis compare-le à son inverse :\n' +
-      'const propre = texte.toLowerCase().replaceAll(" ", "");\n' +
-      "return propre === [...propre].reverse().join(\"\");",
+      "1. Passe la chaîne en minuscules avec .toLowerCase().\n" +
+      '2. Retire les espaces avec .replaceAll(" ", "").\n' +
+      "3. Compare la chaîne nettoyée avec son inverse ([...propre].reverse().join(\"\") ou deux pointeurs).",
   },
 ];
 

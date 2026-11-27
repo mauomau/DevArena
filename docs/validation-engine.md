@@ -43,9 +43,10 @@ Runtime Node.js obligatoire (`node:vm`).
 
 ```json
 {
+  "sessionId": "…",
+  "sessionToken": "…",
   "levelId": 1,
   "code": "<h1>Hello ESGIS</h1>",
-  "remainingSeconds": 32,
   "hintUsed": false,
   "skipped": false
 }
@@ -74,15 +75,26 @@ Réponse `200` :
       "detail": "Titre détecté : « Hello ESGIS »"
     }
   ],
-  "nextLevel": 2
+  "nextLevel": 2,
+  "totalScore": 164,
+  "levelsValidated": 1,
+  "totalTimeSeconds": 13,
+  "remainingSeconds": 32,
+  "nextLevelStartedAt": "2026-11-27T00:00:14.800Z",
+  "serverNow": "2026-11-27T00:00:13.000Z",
+  "finished": false
 }
 ```
 
 - `valid: false` → 0 point, `nextLevel: null` : le joueur peut réessayer.
 - `skipped: true` → 0 point, `nextLevel` avance.
-- `nextLevel: null` en cas d'échec, ou après le niveau 5.
+- `nextLevel: null` en cas d'échec, ou après le niveau 5 (`finished: true`).
 - `400` pour une requête mal formée, un niveau inconnu, un code trop long
-  (> 20 000 caractères) ou un « Passer » demandé avant 30 s écoulées.
+  (> 20 000 caractères), un temps écoulé hors tolérance ou un « Passer » demandé
+  avant 30 s écoulées.
+- `401` si `sessionId` ou `sessionToken` est manquant ou invalide.
+- `409` si le niveau est déjà validé (idempotence) ou hors ordre.
+- `429` si le rate limit est dépassé.
 - `500` réservé aux erreurs internes inattendues.
 
 ## Règles de score
@@ -99,9 +111,9 @@ niveau passé = 0 point, quelles que soient les options
 | Niveau | Base | Chrono | Bonus max | Total max |
 | :--- | :---: | :---: | :---: | :---: |
 | 1 | 100 | 45 s | 90 | 190 |
-| 2 | 150 | 60 s | 120 | 270 |
+| 2 | 150 | 75 s | 150 | 300 |
 | 3 | 200 | 90 s | 180 | 380 |
-| 4 | 250 | 90 s | 180 | 430 |
+| 4 | 250 | 75 s | 150 | 400 |
 | 5 | 300 | 120 s | 240 | 540 |
 | **Total** | **1000** | **405 s** | **810** | **1810** |
 
@@ -113,44 +125,42 @@ décroissant, puis `totalTimeSeconds` croissant, puis pseudo. Le plafond SQL
 
 **Écran joueur (`/play`)** :
 
-1. Afficher `level.statement`, `level.starterCode` et `level.hint`.
-2. Au clic « Valider », appeler `/api/validate` avec `remainingSeconds`.
-3. Afficher `feedback` + `checks` ; n'avancer que si `valid` ou `skipped`.
-4. En cas de `hintUsed`, prévenir que 30 points seront retirés.
+1. Créer la session via `POST /api/sessions` puis afficher `level.statement`,
+   `level.starterCode` et `level.hint`.
+2. Au clic « Afficher un indice », appeler `POST /api/sessions/hint` pour
+   enregistrer la pénalité de 30 pts côté serveur.
+3. Au clic « Valider », appeler `POST /api/validate` avec `sessionId` et
+   `sessionToken` (le serveur calcule le temps restant depuis `started_at`).
+4. Afficher `feedback` + `checks` ; n'avancer que si `valid` ou `skipped`.
+5. En fin de partie, appeler `POST /api/scores` avec `sessionId` et
+   `sessionToken`.
 
 **Base de données & déploiement (pôle 4)** :
 
-- Écrire le score avec la clé `SUPABASE_SERVICE_ROLE_KEY`, jamais depuis le
-  navigateur.
-- **Idempotence** : un même niveau ne doit être crédité qu'une seule fois par
-  session. Ajoutez une contrainte unique `(session_id, level_id)` (ou une table
-  de complétion) et refusez une seconde validation du même niveau, sinon un
-  double-clic peut doubler les points.
-- Mettre à jour `current_level` avec `nextLevel` et `total_time_seconds` avec
-  le temps réellement passé.
+- Écrire les sessions et scores avec la clé `SUPABASE_SERVICE_ROLE_KEY`, jamais
+  depuis le navigateur.
+- **Idempotence** : `session_level_results` porte une contrainte unique
+  `(session_id, level_id)` et un verrou atomique sur `completed_at IS NULL`
+  refuse (`409`) toute seconde validation du même niveau.
+- L'écriture du classement passe par la fonction SQL atomique
+  `upsert_best_score()` sans troncature à 500 lignes.
 
 **Sécurité du chrono** :
 
-`remainingSeconds` est aujourd'hui fourni par le client. C'est acceptable pour
-la démo, mais un joueur pourrait l'augmenter pour gagner le bonus maximal.
-Avant la mise en production, stocker l'heure de début du niveau dans Supabase
-et recalculer côté serveur :
-
-```ts
-const elapsed = (Date.now() - new Date(attempt.started_at).getTime()) / 1000;
-const remainingSeconds = Math.max(0, level.durationSeconds - elapsed);
-```
-
-puis passer cette valeur à `computeLevelScore()`.
+`remainingSeconds` est recalculé côté serveur à partir de l'horodatage de début
+du niveau (`session_level_results.started_at`) et passé à
+`computeLevelScore()`. Une tolérance réseau de 2 secondes est appliquée en fin
+de chrono (avec bonus rapidité nul).
 
 ## Sécurité de la sandbox
 
 - Le code joueur n'a accès ni à `require`, ni à `process`, ni au système de
   fichiers. `new Function` / `eval` sont désactivés (`codeGeneration`).
 - Chaque test dispose d'un timeout de 500 ms et la taille du code est limitée.
-- `node:vm` **n'est pas une frontière de sécurité parfaite**. Pour un événement
-  public à fort trafic : rate-limit sur `/api/validate`, et idéalement exécuter
-  la validation dans un worker/conteneur séparé (`isolated-vm`, service dédié).
+- `node:vm` **n'est pas une frontière de sécurité parfaite**. `/api/validate`
+  est protégé par un rate limiting ; pour un événement public à fort trafic,
+  exécuter idéalement la validation dans un worker/conteneur séparé
+  (`isolated-vm`, service dédié).
 - Le mini-DOM du niveau 3 est volontairement limité au contrat de l'énoncé
   (`getElementById`, `querySelector`, `addEventListener`, `onclick`,
   `textContent`, `innerText`, `innerHTML`, `DOMContentLoaded`). Il ne remplace
@@ -161,7 +171,7 @@ puis passer cette valeur à `computeLevelScore()`.
 
 ```bash
 npm install
-npm test          # 73 tests : scoring, 5 niveaux, cas limites, API
+npm test          # 101 tests : scoring, 5 niveaux, sessions, PIN, rate limit, API
 npm run typecheck
 ```
 

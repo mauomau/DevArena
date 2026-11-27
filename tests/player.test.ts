@@ -3,7 +3,9 @@ import { test } from "node:test";
 import {
   bestEntryPerPseudo,
   isBetterScore,
+  isBlockedPseudo,
   normalizePseudo,
+  parsePlayerRegistration,
   parseScoreSubmission,
   pseudoKey,
   type ScoreEntry,
@@ -119,4 +121,39 @@ test("bestEntryPerPseudo ne garde qu'une performance par joueur", () => {
 
   const achille = best.find((candidate) => pseudoKey(candidate.pseudo) === "achille");
   assert.equal(achille?.totalTimeSeconds, 150);
+});
+
+test("parsePlayerRegistration valide filière, niveau L1-M2 et PIN à 4 chiffres", () => {
+  const valid = parsePlayerRegistration({
+    pseudo: "Achille_Dev",
+    filiere: "IRT",
+    niveau: "L2",
+    pin: "2026",
+  });
+  assert.equal(valid.ok, true);
+  if (!valid.ok) return;
+  assert.equal(valid.value.filiereDisplay, "IRT • L2");
+
+  const badNiveau = parsePlayerRegistration({
+    pseudo: "Achille_Dev",
+    filiere: "IRT",
+    niveau: "Doctorat",
+    pin: "2026",
+  });
+  assert.equal(badNiveau.ok, false);
+
+  const badPin = parsePlayerRegistration({
+    pseudo: "Achille_Dev",
+    filiere: "IRT",
+    niveau: "L2",
+    pin: "12ab",
+  });
+  assert.equal(badPin.ok, false);
+});
+
+test("bloque les pseudos réservés ou offensants", () => {
+  for (const blocked of ["Admin", "ESGIS", "ESLIS", "Test", "admin_esgis", "Merde"]) {
+    assert.equal(isBlockedPseudo(blocked), true, `Aurait dû bloquer ${blocked}`);
+  }
+  assert.equal(isBlockedPseudo("Achille_Dev"), false);
 });

@@ -11,6 +11,12 @@ export const GAME_CONFIG = {
   hintPenalty: 30,
   /** Le bouton « Passer » devient disponible après 30 secondes écoulées. */
   skipAvailableAfterSeconds: 30,
+  /** Temps de lecture offert avant le départ automatique du chrono du niveau. */
+  readingWindowSeconds: 12,
+  /** Délai d'affichage du succès avant l'ouverture du niveau suivant. */
+  nextLevelDelayMs: 1800,
+  /** Tolérance réseau (secondes) à la fin du chrono d'un niveau. */
+  submissionGraceSeconds: 2,
   /** Plafond de sécurité pour la contrainte SQL `score <= 2000`. */
   maxScore: 2000,
   /** Taille maximale du code accepté par l'API (anti-abus). */

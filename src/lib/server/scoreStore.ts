@@ -11,10 +11,11 @@ import { getSupabaseAdmin } from "./supabaseAdmin";
 /**
  * Persistance des scores.
  *
- * - Si Supabase est configuré (URL + service role), les scores vivent dans la
- *   table `scores` et le leaderboard est alimenté par Realtime.
+ * - Si Supabase est configuré (URL + service role), les écritures passent par
+ *   la fonction RPC atomique `upsert_best_score` (PostgreSQL `ON CONFLICT` +
+ *   calcul du rang exact en base, sans limite arbitraire à 500 joueurs).
  * - Sinon, un store mémoire permet de tester tout le parcours en local
- *   (joueur → API → leaderboard) sans aucune clé. ⚠️ Ce mode n'est PAS
+ *   (session → API → leaderboard) sans aucune clé. ⚠️ Ce mode n'est PAS
  *   persistant : il est remis à zéro à chaque redémarrage / instance
  *   serverless. Il ne doit servir qu'aux démos et aux tests.
  */
@@ -45,10 +46,16 @@ interface ScoreRow {
   updated_at: string;
 }
 
+interface UpsertBestScoreRow extends ScoreRow {
+  improved: boolean;
+  rank: number | string;
+  total_players: number | string;
+}
+
 const SCORE_COLUMNS =
   "id, pseudo, filiere, score, current_level, total_time_seconds, updated_at";
 
-const MAX_ROWS = 500;
+const PAGE_SIZE = 1000;
 
 declare global {
   var __devarenaScoreMemory: Map<string, ScoreEntry> | undefined;
@@ -85,7 +92,11 @@ function rankOf(entries: readonly ScoreEntry[], pseudo: string): number {
   return entries.findIndex((entry) => pseudoKey(entry.pseudo) === key) + 1;
 }
 
-/** Classement courant, trié (score décroissant puis temps croissant). */
+/**
+ * Classement courant, trié (score décroissant puis temps croissant).
+ * Pagine par tranches de 1000 lignes dans l'ordre officiel afin de ne jamais
+ * tronquer silencieusement les meilleurs scores.
+ */
 export async function listScores(): Promise<LeaderboardSnapshot> {
   const admin = getSupabaseAdmin();
 
@@ -96,21 +107,37 @@ export async function listScores(): Promise<LeaderboardSnapshot> {
     };
   }
 
-  const { data, error } = await admin
-    .from("scores")
-    .select(SCORE_COLUMNS)
-    .limit(MAX_ROWS);
+  const allRows: ScoreRow[] = [];
+  let offset = 0;
 
-  if (error) throw supabaseError(error.message);
+  while (true) {
+    const { data, error } = await admin
+      .from("scores")
+      .select(SCORE_COLUMNS)
+      .order("score", { ascending: false })
+      .order("total_time_seconds", { ascending: true })
+      .order("pseudo", { ascending: true })
+      .range(offset, offset + PAGE_SIZE - 1);
+
+    if (error) throw supabaseError(error.message);
+
+    const page = (data ?? []) as ScoreRow[];
+    allRows.push(...page);
+
+    if (page.length < PAGE_SIZE) {
+      break;
+    }
+    offset += PAGE_SIZE;
+  }
 
   return {
-    entries: sortEntries(((data ?? []) as ScoreRow[]).map(mapRow)),
+    entries: sortEntries(allRows.map(mapRow)),
     source: "supabase",
   };
 }
 
 /**
- * Enregistre la performance d'un joueur.
+ * Enregistre la performance d'un joueur de façon atomique.
  * Un joueur n'a qu'une ligne : seule sa meilleure performance est conservée.
  */
 export async function saveScore(
@@ -122,54 +149,32 @@ export async function saveScore(
     return saveInMemory(submission);
   }
 
-  const { data, error } = await admin
-    .from("scores")
-    .select(SCORE_COLUMNS)
-    .limit(MAX_ROWS);
+  const { data, error } = await admin.rpc("upsert_best_score", {
+    p_pseudo: submission.pseudo,
+    p_filiere: submission.filiere,
+    p_score: submission.score,
+    p_current_level: submission.currentLevel,
+    p_total_time_seconds: submission.totalTimeSeconds,
+  });
 
   if (error) throw supabaseError(error.message);
 
-  const rows = (data ?? []) as ScoreRow[];
-  const existing = rows.find(
-    (row) => pseudoKey(row.pseudo) === pseudoKey(submission.pseudo),
-  );
+  const rawRow = Array.isArray(data)
+    ? (data[0] as UpsertBestScoreRow | undefined)
+    : (data as UpsertBestScoreRow | null);
 
-  let improved = true;
-
-  if (existing && !isBetterScore(submission, mapRow(existing))) {
-    improved = false;
-  } else {
-    const payload = {
-      pseudo: submission.pseudo,
-      filiere: submission.filiere,
-      score: submission.score,
-      current_level: submission.currentLevel,
-      total_time_seconds: submission.totalTimeSeconds,
-      updated_at: new Date().toISOString(),
-    };
-
-    const { error: writeError } = existing
-      ? await admin.from("scores").update(payload).eq("id", existing.id)
-      : await admin.from("scores").insert(payload);
-
-    if (writeError) throw supabaseError(writeError.message);
-  }
-
-  const snapshot = await listScores();
-  const entry = snapshot.entries.find(
-    (candidate) => pseudoKey(candidate.pseudo) === pseudoKey(submission.pseudo),
-  );
-
-  if (!entry) {
+  if (!rawRow) {
     throw new Error("Score enregistré mais introuvable dans le classement.");
   }
 
+  const snapshot = await listScores();
+
   return {
     ...snapshot,
-    entry,
-    improved,
-    rank: rankOf(snapshot.entries, submission.pseudo),
-    totalPlayers: snapshot.entries.length,
+    entry: mapRow(rawRow),
+    improved: Boolean(rawRow.improved),
+    rank: Number(rawRow.rank),
+    totalPlayers: Number(rawRow.total_players),
   };
 }
 
@@ -205,4 +210,21 @@ function saveInMemory(submission: ScoreSubmission): SaveScoreResult {
     rank: rankOf(entries, submission.pseudo),
     totalPlayers: entries.length,
   };
+}
+
+export async function clearAllScores(): Promise<void> {
+  memoryScores.clear();
+  const admin = getSupabaseAdmin();
+  if (!admin) return;
+
+  const { error } = await admin
+    .from("scores")
+    .delete()
+    .not("id", "is", null);
+
+  if (error) throw supabaseError(error.message);
+}
+
+export function resetMemoryScoresForTests(): void {
+  memoryScores.clear();
 }

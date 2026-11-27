@@ -1,6 +1,6 @@
 "use client";
 
-import { Lightbulb, Play, SkipForward } from "lucide-react";
+import { BookOpen, Lightbulb, Play, SkipForward } from "lucide-react";
 
 import ValidationFeedback from "./ValidationFeedback";
 import { GAME_CONFIG } from "@/lib/game/config";
@@ -16,6 +16,8 @@ interface ChallengePanelProps {
   };
 
   hintUsed: boolean;
+  isReading: boolean;
+  readingSeconds: number;
   isTimeUp: boolean;
   isSubmitting: boolean;
   isSuccess: boolean;
@@ -24,6 +26,7 @@ interface ChallengePanelProps {
   error: string | null;
   validation: ValidateResponse | null;
 
+  onStartLevelNow: () => void;
   onUseHint: () => void;
   onSubmit: () => void;
   onSkip: () => void;
@@ -32,6 +35,8 @@ interface ChallengePanelProps {
 export default function ChallengePanel({
   level,
   hintUsed,
+  isReading,
+  readingSeconds,
   isTimeUp,
   isSubmitting,
   isSuccess,
@@ -39,6 +44,7 @@ export default function ChallengePanel({
   skipRemainingSeconds,
   error,
   validation,
+  onStartLevelNow,
   onUseHint,
   onSubmit,
   onSkip,
@@ -73,11 +79,37 @@ export default function ChallengePanel({
           </p>
         </div>
 
+        {isReading && (
+          <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-300 text-xs text-amber-950 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-extrabold flex items-center gap-1.5">
+                <BookOpen className="w-4 h-4 text-[#9E1B24]" />
+                Lecture de l’énoncé (chrono en pause)
+              </span>
+              <span className="font-mono font-bold px-2 py-0.5 rounded bg-white border border-amber-300">
+                {readingSeconds}s
+              </span>
+            </div>
+            <p className="text-[11px] text-amber-900 leading-relaxed">
+              Prends connaissance du défi avant le départ du chrono, ou clique
+              ci-dessous dès que tu es prêt.
+            </p>
+            <button
+              type="button"
+              onClick={onStartLevelNow}
+              className="w-full py-2.5 px-3 rounded-lg bg-[#9E1B24] hover:bg-[#7A1219] text-white font-extrabold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <Play className="w-3.5 h-3.5 fill-current" />
+              J’ai lu, lancer le chrono
+            </button>
+          </div>
+        )}
+
         <div>
           {!hintUsed ? (
             <button
               type="button"
-              disabled={isTimeUp || isSubmitting || isSuccess}
+              disabled={isReading || isTimeUp || isSubmitting || isSuccess}
               onClick={onUseHint}
               className="w-full py-2.5 px-3 rounded-xl bg-[#FCF8E8] hover:bg-[#D4AF37]/20 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[#FCF8E8] text-[#947618] border border-[#D4AF37]/50 text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer"
             >
@@ -94,7 +126,7 @@ export default function ChallengePanel({
                 Indice débloqué (-{hintPenalty} pts) :
               </p>
 
-              <p className="leading-relaxed">{level.hint}</p>
+              <p className="leading-relaxed whitespace-pre-wrap">{level.hint}</p>
             </div>
           )}
         </div>
@@ -111,17 +143,19 @@ export default function ChallengePanel({
       <div className="pt-5 space-y-2.5 border-t border-slate-100 mt-4">
         <button
           type="button"
-          disabled={isTimeUp || isSubmitting || isSuccess}
+          disabled={isReading || isTimeUp || isSubmitting || isSuccess}
           onClick={onSubmit}
           className="w-full py-3.5 px-4 rounded-xl bg-[#9E1B24] hover:bg-[#7A1219] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#9E1B24] text-white font-extrabold text-sm shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
         >
           <Play className="w-4 h-4 fill-current" />
 
-          {isTimeUp
-            ? "Temps écoulé"
-            : isSubmitting
-              ? "Vérification en cours..."
-              : "Valider mon code"}
+          {isReading
+            ? `Départ dans ${readingSeconds}s…`
+            : isTimeUp
+              ? "Temps écoulé"
+              : isSubmitting
+                ? "Vérification en cours..."
+                : "Valider mon code"}
         </button>
 
         <button

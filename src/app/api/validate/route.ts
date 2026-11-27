@@ -1,17 +1,21 @@
 import { GAME_CONFIG } from "../../../lib/game/config";
-import type {
-  ApiErrorResponse,
-  ValidateRequest,
-  ValidateResponse,
-} from "../../../lib/game/contracts";
+import type { ValidateRequest } from "../../../lib/game/contracts";
 import { isLevelId } from "../../../lib/levels";
 import {
-  canSkip,
-  computeLevelScore,
-  type ScoreBreakdown,
-} from "../../../lib/scoring";
-import { validateLevel } from "../../../lib/validation/engine";
-import type { ValidationResult } from "../../../lib/validation/types";
+  jsonError,
+  parseJsonBody,
+  parseSessionAuth,
+  rateLimitResponse,
+} from "../../../lib/server/apiUtils";
+import {
+  consumeRateLimit,
+  getClientIp,
+  RATE_LIMITS,
+} from "../../../lib/server/rateLimit";
+import {
+  SessionHttpError,
+  validateSessionAttempt,
+} from "../../../lib/server/sessionStore";
 
 /**
  * La sandbox utilise `node:vm` : ce handler doit tourner sur le runtime
@@ -20,132 +24,110 @@ import type { ValidationResult } from "../../../lib/validation/types";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function errorResponse(
-  message: string,
-  status = 400,
-): Response {
-  const body: ApiErrorResponse = { error: message };
-  return Response.json(body, { status });
-}
-
-function emptyBreakdown(): ScoreBreakdown {
-  return {
-    basePoints: 0,
-    speedBonus: 0,
-    hintPenalty: 0,
-    totalPoints: 0,
-  };
-}
-
-function parseBody(value: unknown): ValidateRequest | string {
+function parseBody(
+  value: unknown,
+): { ok: true; value: ValidateRequest } | { ok: false; error: string; status: number } {
   if (typeof value !== "object" || value === null) {
-    return "Corps de requête invalide : un objet JSON est attendu.";
+    return {
+      ok: false,
+      error: "Corps de requête invalide : un objet JSON est attendu.",
+      status: 400,
+    };
   }
 
   const body = value as Record<string, unknown>;
+  const auth = parseSessionAuth(body);
+  if (!auth.ok) {
+    return { ok: false, error: auth.error, status: 401 };
+  }
 
   if (!isLevelId(body.levelId)) {
-    return "Le champ levelId doit être un niveau valide (1 à 5).";
+    return {
+      ok: false,
+      error: "Le champ levelId doit être un niveau valide (1 à 5).",
+      status: 400,
+    };
   }
   if (typeof body.code !== "string") {
-    return "Le champ code est requis et doit être une chaîne de caractères.";
+    return {
+      ok: false,
+      error: "Le champ code est requis et doit être une chaîne de caractères.",
+      status: 400,
+    };
   }
   if (body.code.length > GAME_CONFIG.maxCodeLength) {
-    return `Le code dépasse la taille maximale de ${GAME_CONFIG.maxCodeLength} caractères.`;
-  }
-  if (
-    typeof body.remainingSeconds !== "number" ||
-    !Number.isFinite(body.remainingSeconds) ||
-    body.remainingSeconds < 0
-  ) {
-    return "Le champ remainingSeconds doit être un nombre positif.";
+    return {
+      ok: false,
+      error: `Le code dépasse la taille maximale de ${GAME_CONFIG.maxCodeLength} caractères.`,
+      status: 400,
+    };
   }
   if (body.hintUsed !== undefined && typeof body.hintUsed !== "boolean") {
-    return "Le champ hintUsed doit être un booléen.";
+    return {
+      ok: false,
+      error: "Le champ hintUsed doit être un booléen.",
+      status: 400,
+    };
   }
   if (body.skipped !== undefined && typeof body.skipped !== "boolean") {
-    return "Le champ skipped doit être un booléen.";
+    return {
+      ok: false,
+      error: "Le champ skipped doit être un booléen.",
+      status: 400,
+    };
   }
 
   return {
-    levelId: body.levelId,
-    code: body.code,
-    remainingSeconds: body.remainingSeconds,
-    hintUsed: body.hintUsed === true,
-    skipped: body.skipped === true,
+    ok: true,
+    value: {
+      sessionId: auth.value.sessionId,
+      sessionToken: auth.value.sessionToken,
+      levelId: body.levelId,
+      code: body.code,
+      hintUsed: body.hintUsed === true,
+      skipped: body.skipped === true,
+    },
   };
 }
 
 /**
  * POST /api/validate
  *
- * Valide le code d'un joueur et calcule les points du niveau.
- *
- * ⚠️ Sécurité : `remainingSeconds` est encore fourni par le client.
- * Avant la mise en production, l'écran joueur devra créer une session
- * Supabase et cette route devra recalculer le temps restant à partir de
- * l'heure de début enregistrée côté serveur (voir docs/validation-engine.md).
+ * Valide le code d'un joueur au sein d'une session authentifiée et calcule les
+ * points uniquement à partir de l'horodatage serveur du niveau.
  */
 export async function POST(request: Request): Promise<Response> {
-  let rawBody: unknown;
+  const ipLimit = consumeRateLimit(RATE_LIMITS.validateIp, getClientIp(request));
+  if (!ipLimit.allowed) {
+    return rateLimitResponse(ipLimit);
+  }
+
+  const parsedJson = await parseJsonBody(request);
+  if (!parsedJson.ok) {
+    return parsedJson.response;
+  }
+
+  const parsed = parseBody(parsedJson.value);
+  if (!parsed.ok) {
+    return jsonError(parsed.error, parsed.status);
+  }
+
+  const sessionLimit = consumeRateLimit(
+    RATE_LIMITS.validateSession,
+    parsed.value.sessionId,
+  );
+  if (!sessionLimit.allowed) {
+    return rateLimitResponse(sessionLimit);
+  }
+
   try {
-    rawBody = await request.json();
-  } catch {
-    return errorResponse("JSON invalide.");
-  }
-
-  const parsed = parseBody(rawBody);
-  if (typeof parsed === "string") {
-    return errorResponse(parsed);
-  }
-
-  const skipped = parsed.skipped === true;
-
-  if (skipped && !canSkip(parsed.levelId, parsed.remainingSeconds)) {
-    return errorResponse(
-      `Le bouton « Passer » n'est disponible qu'après ${GAME_CONFIG.skipAvailableAfterSeconds} secondes.`,
-    );
-  }
-
-  try {
-    let validation: ValidationResult;
-    if (skipped) {
-      validation = {
-        valid: false,
-        checks: [],
-        feedback: "Niveau passé : 0 point attribué.",
-      };
-    } else {
-      validation = validateLevel(parsed.levelId, parsed.code);
-    }
-
-    const breakdown = validation.valid
-      ? computeLevelScore(parsed.levelId, {
-          remainingSeconds: parsed.remainingSeconds,
-          hintUsed: parsed.hintUsed === true,
-          skipped,
-        })
-      : emptyBreakdown();
-
-    const completed = validation.valid || skipped;
-    const candidateNext = parsed.levelId + 1;
-    const nextLevel: ValidateResponse["nextLevel"] =
-      completed && isLevelId(candidateNext) ? candidateNext : null;
-
-    const response: ValidateResponse = {
-      levelId: parsed.levelId,
-      valid: validation.valid,
-      skipped,
-      pointsAwarded: breakdown.totalPoints,
-      breakdown,
-      feedback: validation.feedback,
-      checks: validation.checks,
-      nextLevel,
-    };
-
+    const response = await validateSessionAttempt(parsed.value);
     return Response.json(response);
   } catch (error) {
+    if (error instanceof SessionHttpError) {
+      return jsonError(error.message, error.status);
+    }
     console.error("[api/validate] erreur inattendue", error);
-    return errorResponse("Erreur interne lors de la validation.", 500);
+    return jsonError("Erreur interne lors de la validation.", 500);
   }
 }

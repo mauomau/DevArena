@@ -1,17 +1,28 @@
-import type {
-  ApiErrorResponse,
-  LeaderboardResponse,
-  SubmitScoreResponse,
-} from "../../../lib/game/contracts";
-import { parseScoreSubmission } from "../../../lib/game/player";
-import { listScores, saveScore } from "../../../lib/server/scoreStore";
+import type { LeaderboardResponse } from "../../../lib/game/contracts";
+import {
+  jsonError,
+  parseJsonBody,
+  parseSessionAuth,
+  rateLimitResponse,
+} from "../../../lib/server/apiUtils";
+import {
+  consumeRateLimit,
+  getClientIp,
+  RATE_LIMITS,
+} from "../../../lib/server/rateLimit";
+import { listScores } from "../../../lib/server/scoreStore";
+import {
+  saveFinishedSessionScore,
+  SessionHttpError,
+} from "../../../lib/server/sessionStore";
 import { hasSupabaseBrowserConfig } from "../../../lib/supabase";
 
 /**
  * API du classement.
  *
  * - `GET  /api/scores` : classement complet (projecteur).
- * - `POST /api/scores` : enregistre la performance de fin de partie.
+ * - `POST /api/scores` : enregistre au classement le score calculé côté
+ *   serveur pour une session terminée (`sessionId` + `sessionToken`).
  *
  * Les écritures passent par la clé service role côté serveur : la table est
  * en lecture seule pour les clients (RLS).
@@ -19,12 +30,15 @@ import { hasSupabaseBrowserConfig } from "../../../lib/supabase";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function errorResponse(message: string, status = 400): Response {
-  const body: ApiErrorResponse = { error: message };
-  return Response.json(body, { status });
-}
+export async function GET(request: Request): Promise<Response> {
+  const ipLimit = consumeRateLimit(
+    RATE_LIMITS.listScoresIp,
+    getClientIp(request),
+  );
+  if (!ipLimit.allowed) {
+    return rateLimitResponse(ipLimit);
+  }
 
-export async function GET(): Promise<Response> {
   try {
     const snapshot = await listScores();
     const body: LeaderboardResponse = {
@@ -36,7 +50,7 @@ export async function GET(): Promise<Response> {
     return Response.json(body);
   } catch (error) {
     console.error("[api/scores] lecture impossible", error);
-    return errorResponse(
+    return jsonError(
       error instanceof Error ? error.message : "Lecture du classement impossible.",
       500,
     );
@@ -44,31 +58,45 @@ export async function GET(): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  let rawBody: unknown;
-  try {
-    rawBody = await request.json();
-  } catch {
-    return errorResponse("JSON invalide.");
+  const ipLimit = consumeRateLimit(
+    RATE_LIMITS.saveScoreIp,
+    getClientIp(request),
+  );
+  if (!ipLimit.allowed) {
+    return rateLimitResponse(ipLimit);
   }
 
-  const parsed = parseScoreSubmission(rawBody);
-  if (!parsed.ok) {
-    return errorResponse(parsed.error);
+  const parsedJson = await parseJsonBody(request);
+  if (!parsedJson.ok) {
+    return parsedJson.response;
+  }
+
+  if (typeof parsedJson.value !== "object" || parsedJson.value === null) {
+    return jsonError("Corps de requête invalide : un objet JSON est attendu.");
+  }
+
+  const auth = parseSessionAuth(parsedJson.value as Record<string, unknown>);
+  if (!auth.ok) {
+    return jsonError(auth.error, 401);
+  }
+
+  const sessionLimit = consumeRateLimit(
+    RATE_LIMITS.saveScoreSession,
+    auth.value.sessionId,
+  );
+  if (!sessionLimit.allowed) {
+    return rateLimitResponse(sessionLimit);
   }
 
   try {
-    const result = await saveScore(parsed.value);
-    const body: SubmitScoreResponse = {
-      entry: result.entry,
-      improved: result.improved,
-      rank: result.rank,
-      totalPlayers: result.totalPlayers,
-      source: result.source,
-    };
+    const body = await saveFinishedSessionScore(auth.value);
     return Response.json(body);
   } catch (error) {
+    if (error instanceof SessionHttpError) {
+      return jsonError(error.message, error.status);
+    }
     console.error("[api/scores] écriture impossible", error);
-    return errorResponse(
+    return jsonError(
       error instanceof Error ? error.message : "Enregistrement du score impossible.",
       500,
     );

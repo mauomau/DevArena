@@ -27,9 +27,9 @@ pendant que les scores s'affichent en direct sur vidéoprojecteur.
 | Niveau | Thème | Chrono | Points de base | Objectif |
 | :--- | :--- | :---: | :---: | :--- |
 | 1. Le Déclic | HTML | 45s | 100 pts | Afficher un titre exact (`Hello ESGIS`). |
-| 2. Le Styliste | CSS | 60s | 150 pts | Styliser un bouton aux couleurs de l'ESGIS. |
+| 2. Le Styliste | CSS | 75s | 150 pts | Styliser un bouton aux couleurs de l'ESGIS. |
 | 3. L'Interactif | JS (DOM) | 90s | 200 pts | Implémenter un bouton compteur (`+1` au clic). |
-| 4. Bug Hunter | Debug | 90s | 250 pts | Corriger 2 erreurs cachées dans un script existant. |
+| 4. Bug Hunter | Debug | 75s | 250 pts | Corriger 2 erreurs cachées dans un script existant. |
 | 5. Le Boss Final | Algo | 120s | 300 pts | Résoudre un mini-problème de logique pure. |
 
 ### Règles de calcul des points
@@ -56,19 +56,22 @@ pendant que les scores s'affichent en direct sur vidéoprojecteur.
 ```text
 devarena/
 ├── supabase/
-│   └── schema.sql                # Table scores, RLS, publication Realtime
+│   └── schema.sql                # Tables scores/sessions, RPC atomique, RLS, Realtime
 ├── src/
 │   ├── app/
-│   │   ├── api/validate/route.ts # Validation sécurisée d'un niveau
-│   │   ├── api/scores/route.ts   # Lecture / écriture du classement
-│   │   ├── page.tsx              # Accueil et présentation du défi
-│   │   ├── play/page.tsx         # Arène de code (Éditeur + Preview + Chrono)
-│   │   └── leaderboard/page.tsx  # Écran vidéoprojecteur temps réel
+│   │   ├── api/sessions/route.ts      # Création de session serveur
+│   │   ├── api/sessions/hint/route.ts # Enregistrement serveur de l'indice
+│   │   ├── api/validate/route.ts      # Validation sécurisée et calcul serveur
+│   │   ├── api/scores/route.ts        # Lecture / écriture atomique du classement
+│   │   ├── page.tsx                   # Accueil et présentation du défi
+│   │   ├── play/page.tsx              # Arène de code (Éditeur + Preview + Chrono)
+│   │   └── leaderboard/page.tsx       # Écran vidéoprojecteur temps réel
 │   ├── components/
 │   │   ├── CodeEditor.tsx        # Wrapper CodeMirror
 │   │   ├── JoinQrCode.tsx        # QR code WhatsApp (client)
 │   │   ├── LeaderboardScreen.tsx # Podium + classement + Realtime
-│   │   └── LivePreview.tsx       # Sandbox iframe
+│   │   ├── LivePreview.tsx       # Sandbox iframe
+│   │   └── play/                 # Sous-composants de l'arène joueur
 │   └── lib/
 │       ├── levels.ts             # Énoncés et codes de départ publics
 │       ├── scoring.ts            # Barème et classement
@@ -76,12 +79,15 @@ devarena/
 │       ├── game/
 │       │   ├── config.ts         # Barème, durées, club, WhatsApp
 │       │   ├── contracts.ts      # Types des API
-│       │   └── player.ts         # Validation des scores et dédoublonnage
+│       │   └── player.ts         # Validation identité/scores et dédoublonnage
 │       ├── server/
-│       │   ├── scoreStore.ts     # Persistance Supabase + fallback mémoire
+│       │   ├── apiUtils.ts       # Helpers JSON, auth session et erreurs HTTP
+│       │   ├── rateLimit.ts      # Limitation de débit (anti-abus)
+│       │   ├── scoreStore.ts     # Persistance Supabase (RPC atomique) + fallback mémoire
+│       │   ├── sessionStore.ts   # Sessions, chrono par horodatage et idempotence
 │       │   └── supabaseAdmin.ts  # Client service role (serveur uniquement)
 │       └── validation/           # Moteur de validation des 5 niveaux
-├── tests/                        # Tests Node (barème, niveaux, API)
+├── tests/                        # Tests Node (barème, niveaux, sessions, API)
 └── .env.example                  # Modèle des variables d'environnement
 ```
 
@@ -122,9 +128,10 @@ NEXT_PUBLIC_WHATSAPP_GROUP_URL=https://chat.whatsapp.com/votre-lien
 ### 3. Configurer la base de données Supabase
 
 Ouvre **Supabase > SQL Editor**, colle le contenu de
-[`supabase/schema.sql`](supabase/schema.sql) puis exécute-le. Le script crée la
-table `scores`, active la RLS (lecture publique, écriture réservée au serveur)
-et ajoute la table à la publication Realtime.
+[`supabase/schema.sql`](supabase/schema.sql) puis exécute-le. Le script crée les
+tables `scores`, `game_sessions` et `session_level_results`, la fonction RPC
+atomique `upsert_best_score`, active la RLS et ajoute `scores` à la publication
+Realtime.
 
 ### 4. Lancer le serveur de développement
 
@@ -139,16 +146,18 @@ npm run dev
 ### 5. Vérifier le projet
 
 ```bash
-npm test        # 80+ tests (niveaux, barème, API scores)
+npm test        # 101 tests (niveaux, barème, sessions, PIN, admin, API)
 npm run typecheck
+npm run lint
 npm run build
 ```
 
 ## Mode démo sans Supabase
 
 Si les variables Supabase ne sont pas définies, l'application reste
-entièrement fonctionnelle en local : les scores sont stockés dans un `Map`
-côté serveur et le leaderboard se rafraîchit par sondage toutes les 5 secondes.
+entièrement fonctionnelle en local : les sessions et les scores sont stockés en
+mémoire côté serveur et le leaderboard se rafraîchit par sondage toutes les 5
+secondes.
 
 /!\ Ce mode n'est **pas persistant** : il est remis à zéro à chaque redémarrage
 du serveur et ne fonctionne pas sur Vercel (instances serverless). Il sert
@@ -156,22 +165,65 @@ uniquement aux démos et aux tests. Pour l'événement, configure Supabase.
 
 ## API
 
-### `POST /api/validate`
+### `POST /api/sessions`
 
-Valide le code d'un joueur et calcule les points du niveau.
+Démarre une session côté serveur et initialise l'horodatage du niveau 1 :
 
 ```json
 {
+  "pseudo": "Achille_Dev",
+  "filiere": "IRT",
+  "niveau": "L2",
+  "pin": "2026"
+}
+```
+
+Réponse `201` : `{ sessionId, sessionToken, pseudo, filiere, niveau, currentLevel, startedAt, levelStartedAt, levelDurationSeconds, serverNow }`.
+
+### `GET / DELETE /api/admin/scores`
+
+Routes réservées aux PC du stand (`stand_auth` / `x-stand-key`) :
+- `GET /api/admin/scores` : exporte le classement au format CSV (`devarena-scores-YYYY-MM-DD.csv`).
+- `DELETE /api/admin/scores` avec `{ "confirm": "RESET_ALL_SCORES" }` : vide les scores, sessions et PIN de test avant l'événement.
+
+### `POST /api/sessions/start-level`
+
+Démarre immédiatement le chrono du niveau actif (avant l'expiration de la
+fenêtre de lecture de 12 s).
+
+### `POST /api/sessions/hint`
+
+Enregistre côté serveur le déblocage de l'indice sur le niveau actif (pénalité
+de 30 pts garantie même si le client modifie la requête de validation) :
+
+```json
+{
+  "sessionId": "…",
+  "sessionToken": "…",
+  "levelId": 2
+}
+```
+
+### `POST /api/validate`
+
+Valide le code d'un joueur au sein d'une session authentifiée et calcule les
+points du niveau à partir de l'horodatage serveur :
+
+```json
+{
+  "sessionId": "…",
+  "sessionToken": "…",
   "levelId": 1,
   "code": "<h1>Hello ESGIS</h1>",
-  "remainingSeconds": 32,
   "hintUsed": false,
   "skipped": false
 }
 ```
 
 La réponse contient `valid`, `pointsAwarded`, le détail `breakdown`, les
-`checks` et le `nextLevel`. Voir [`docs/validation-engine.md`](docs/validation-engine.md).
+`checks`, `nextLevel`, ainsi que l'état serveur (`totalScore`,
+`levelsValidated`, `totalTimeSeconds`, `remainingSeconds`, `nextLevelStartedAt`,
+`serverNow`, `finished`). Voir [`docs/validation-engine.md`](docs/validation-engine.md).
 
 ### `GET /api/scores`
 
@@ -197,17 +249,13 @@ Renvoie le classement trié et le mode de stockage :
 
 ### `POST /api/scores`
 
-Enregistre la performance de fin de partie. Un joueur n'a qu'une ligne : seule
-sa meilleure performance est conservée (score le plus haut, puis temps le plus
-court).
+Enregistre la performance finale d'une session terminée de façon atomique
+(`upsert_best_score`). Aucun score chiffré n'est accepté depuis le client :
 
 ```json
 {
-  "pseudo": "Achille_Dev",
-  "filiere": "IRT",
-  "score": 1280,
-  "currentLevel": 5,
-  "totalTimeSeconds": 212
+  "sessionId": "…",
+  "sessionToken": "…"
 }
 ```
 
@@ -217,19 +265,31 @@ Réponse : `{ entry, improved, rank, totalPlayers, source }`.
 
 1. Pousse la branche sur GitHub.
 2. Sur [Vercel](https://vercel.com), importe le dépôt `mauomau/DevArena`.
-3. Ajoute les quatre variables d'environnement de `.env.example` dans
-   **Project Settings > Environment Variables**.
+3. Ajoute les variables d'environnement de `.env.example` dans
+   **Project Settings > Environment Variables** (dont `STAND_SECRET_KEY` pour
+   verrouiller `/play` et les écritures `/api`).
 4. Déploie. Chaque push sur la branche de production redéploie automatiquement.
 5. Exécute `supabase/schema.sql` sur le projet Supabase de production.
+6. Sur les PC joueurs du stand uniquement, ouvre une fois
+   `https://votre-site.vercel.app/play?key=VOTRE_STAND_SECRET_KEY` pour poser
+   le cookie `stand_auth` et nettoyer l'URL. `/leaderboard` et `GET /api/scores`
+   restent en accès libre pour le vidéoprojecteur.
 
 ## Sécurité et limites connues
 
-- La table `scores` est en lecture seule pour les clients : les écritures
-  passent exclusivement par `SUPABASE_SERVICE_ROLE_KEY` côté serveur.
-- Le temps restant (`remainingSeconds`) et le score final sont encore transmis
-  par le client. Pour un événement sur stand, cela suffit ; avant une mise en
-  production publique, il faudra créer une session de partie côté serveur et
-  recalculer le chrono et le cumul des points à partir de l'heure de départ.
+- La table `scores` est en lecture seule pour les clients ; `game_sessions` et
+  `session_level_results` ne sont accessibles que via `SUPABASE_SERVICE_ROLE_KEY`
+  côté serveur.
+- Le chrono par niveau, l'ordre des niveaux, l'idempotence (un niveau crédité au
+  maximum une fois par session), l'indice et le score final sont contrôlés côté
+  serveur à partir d'horodatages PostgreSQL/serveur.
+- Les routes `/api/sessions`, `/api/sessions/hint`, `/api/validate` et
+  `/api/scores` appliquent une limitation de débit (rate limiting) en mémoire ;
+  sur un déploiement serverless multi-instances, ce rate limit est par instance
+  et peut être complété par un store distribué (ex. Redis/Upstash) ou un WAF.
+- Les pseudos restent déclaratifs (pas de compte ou mot de passe par joueur) et
+  le dépôt public expose les tests côté serveur : la plateforme est un
+  challenge pédagogique automatisé, pas un examen certifié.
 - Ne jamais commiter `.env.local` ni exposer la clé service role.
 
 ## Contribuer au projet
